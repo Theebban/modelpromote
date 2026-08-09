@@ -1,0 +1,38 @@
+{
+  "name": "modelshift",
+  "version": "0.1.0",
+  "description": "A governed change-control lifecycle for swapping the AI model in a production application: evaluate, accept against a declared policy, approve, activate, verify from telemetry, roll back, and leave an audit record.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "bin": {
+    "modelshift": "./src/cli/index.ts"
+  },
+  "keywords": [
+    "llm",
+    "model-migration",
+    "change-control",
+    "governance",
+    "audit-trail",
+    "rollback",
+    "state-machine",
+    "ai-ops"
+  ],
+  "scripts": {
+    "modelshift": "node --experimental-strip-types src/cli/index.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests",
+    "demo": "node --experimental-strip-types examples/basic-migration/run-demo.ts",
+    "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "eslint": "^9.39.5",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.66.0"
+  }
+}

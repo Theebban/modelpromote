@@ -1,0 +1,44 @@
+# CI for a future GitHub remote. Not active: this repository has no remote yet.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.6 is the floor claimed in package.json engines. Test the floor, not just latest,
+        # or the claim goes stale without anyone noticing.
+        node: ['22.6', '22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # Runs BEFORE any install: the demo and the tests must work from a bare clone,
+      # because the core has zero runtime dependencies. If this step ever needs an install,
+      # that claim has quietly become false.
+      - name: tests and demo with no install
+        run: |
+          npm test
+          npm run demo
+
+      - name: install dev tooling
+        run: npm install
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: lint
+        run: npm run lint
+
+      # Each safety invariant must fail when the implementation is deliberately broken.
+      - name: mutation testing
+        run: bash scripts/mutate.sh

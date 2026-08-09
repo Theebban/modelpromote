@@ -1,0 +1,8 @@
+node_modules/
+coverage/
+*.log
+.DS_Store
+
+# Local migration state written by the CLI. Never committed: it is machine state,
+# and in a real deployment it may name internal models and hosts.
+.modelshift/
