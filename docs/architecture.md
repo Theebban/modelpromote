@@ -40,8 +40,32 @@ is wrong, silently, in the direction of looking better than reality. Deriving bo
 and the report from one append-only source makes "the report claims something that did not
 happen" structurally impossible rather than merely tested.
 
-Reads are strict. Sequence numbers must be contiguous and each event's `from` must equal the
-previous event's `to`. Editing history is detected on load.
+Reads are strict in three independent ways: sequence continuity, `from`/`to` chain continuity,
+and **semantic legality**.
+
+The third was added after an independent review demonstrated the first two were insufficient.
+Changing a single field of a valid record, the first event's `to` from `REGISTERED` to
+`APPROVED`, left the sequence contiguous and the chain intact (its `from` is `null` either
+way), loaded cleanly, and allowed activation with no evaluation and no approval. Structure and
+chain describe the SHAPE of a history; only the transition table describes which histories
+were possible. Every record is now validated against it.
+
+### The policy is locked before the evidence exists
+
+The governing policy is hashed at `register` and re-hashed at each `evaluate`, which is the
+moment evidence is produced. `decide` and `approve` then refuse outright if the current policy
+no longer matches.
+
+The first implementation *warned* and continued. That is not change control: it let an
+operator see a score, relax the rule the score failed, and proceed on evidence earned under
+rules that no longer existed, with nothing but a line of console output to show for it.
+
+The mechanism is a state, not a runtime condition. Changing the policy moves the migration to
+`EVIDENCE_STALE`, which has no path to `APPROVED`; the only exit is a fresh evaluation. The
+tempting alternative was "allow re-evaluation from ACCEPTED only when the policy moved", and
+it is disqualified: it makes legality depend on runtime configuration, so `isLegalEvent` could
+no longer judge a ledger record from the record alone. That is exactly the hole the semantic
+validator closes, and reopening it to save one state would have been a bad trade.
 
 ### Machine verdict and human permission are separate events
 
@@ -76,10 +100,27 @@ The fix is `emergencyRollback`, which reads no ledger, takes its target from con
 and records to a separate `recovery.jsonl` rather than appending to a file that just failed
 verification. The CLI falls back to it automatically, and a test enforces the promise.
 
-### Activation is confirmed by reading back
+### Activation is confirmed by reading back, in two phases
 
 `ActivationTarget` has `read()` as well as `write()`. Activation records what the target
-reports **after** the write, not what was requested.
+reports **after** the write, not what was requested, and it does so in two recorded phases:
+
+```
+record ACTIVATING  ->  write to target  ->  read target back  ->  record the OUTCOME
+```
+
+The ordering is load-bearing. Writing the ledger after the side effect cannot express the
+middle case: a crash between the write and the confirmation would leave the ledger saying
+APPROVED while the candidate was already serving. With the intent recorded first, that
+interruption leaves ACTIVATING, which reads as "something may be live and nothing is
+confirmed". That is unsafe, and it is *readable* as unsafe, which is the point.
+
+The first implementation recorded ACTIVATED whenever the write returned. An activation target
+whose `write()` silently did nothing produced `serving = baseline, state = ACTIVATED`: the
+worst possible combination, because every downstream reader believed the migration had
+happened. Rollback had the identical defect. Both now require a positive read-back, and both
+have a distinct failure state (`ACTIVATION_FAILED`, `ROLLBACK_FAILED`) rather than borrowing
+the success one.
 
 Then verification asks a different question entirely: not "did the config change" but "which
 model actually answered". Those come from different ports on purpose. A config write that

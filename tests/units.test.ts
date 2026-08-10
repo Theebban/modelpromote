@@ -63,7 +63,7 @@ describe('state machine', () => {
   });
 
   test('terminal states permit no forward action', () => {
-    for (const action of ['evaluate', 'accept', 'approve', 'activate', 'verify'] as const) {
+    for (const action of ['evaluate', 'accept', 'approve', 'beginActivation', 'verify'] as const) {
       assert.throws(() => nextState('ROLLED_BACK', action), IllegalTransitionError);
       assert.throws(() => nextState('STABLE', action), IllegalTransitionError);
     }
@@ -87,12 +87,12 @@ describe('state machine', () => {
 
   test('the error names the states that would make the action legal', () => {
     try {
-      nextState('REGISTERED', 'activate');
+      nextState('REGISTERED', 'beginActivation');
       assert.fail('expected a refusal');
     } catch (e) {
       assert.ok(e instanceof IllegalTransitionError);
       assert.deepEqual(e.requiredStates, ['APPROVED']);
-      assert.deepEqual(statesPermitting('activate'), ['APPROVED']);
+      assert.deepEqual(statesPermitting('beginActivation'), ['APPROVED']);
     }
   });
 });
@@ -141,6 +141,7 @@ describe('acceptance policy', () => {
     },
     delta,
     caseSetHash: 'test',
+    governingPolicyHash: 'test-policy',
   });
 
   test('lists every failing rule, not only the first', () => {

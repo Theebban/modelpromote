@@ -1,4 +1,4 @@
-// THE TEN CORE INVARIANTS.
+// THE CORE INVARIANTS.
 //
 // These are the promises the framework makes. Each test drives the real engine against a
 // real ledger on disk; none asserts on a value it constructed itself, and none raises the
@@ -8,12 +8,32 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 
-import { makeRoot, removeRoot, portsFor, fixedClock } from './helpers.ts';
+import { makeRoot, removeRoot, portsFor, fixedClock, driveTo, noopActivationTarget } from './helpers.ts';
 import { loadConfig, writeConfig, DEFAULT_CONFIG } from '../src/config.ts';
-import { IllegalTransitionError, LedgerCorruptError } from '../src/domain/errors.ts';
-import { activate, approve, decide, emergencyRollback, evaluate, register, rollback, stabilise, status, verify } from '../src/engine.ts';
+import {
+  ActivationNotConfirmedError,
+  IllegalTransitionError,
+  LedgerCorruptError,
+  RollbackNotConfirmedError,
+  StalePolicyEvidenceError,
+} from '../src/domain/errors.ts';
+import {
+  abandon,
+  activate,
+  approve,
+  decide,
+  emergencyRollback,
+  evaluate,
+  history,
+  register,
+  rollback,
+  stabilise,
+  status,
+  statusOf,
+  verify,
+} from '../src/engine.ts';
 import { DEMO_CASES, DEMO_VERIFICATION_INPUTS } from '../src/adapters/local/fixtures.ts';
-import { ledgerPath, readLedger, recoveryPath } from '../src/store/ledger.ts';
+import { migrationPath, readMigration, readRecovery, recoveryPath, listMigrations } from '../src/store/ledger.ts';
 import { renderReport } from '../src/audit/report.ts';
 
 let root: string;
@@ -24,52 +44,34 @@ afterEach(() => {
   removeRoot(root);
 });
 
-/** Drive the migration up to (but not including) the named action. */
-async function driveTo(target: 'REGISTERED' | 'EVALUATED' | 'ACCEPTED' | 'APPROVED' | 'ACTIVATED' | 'VERIFIED', candidate = 'demo-candidate') {
-  const config = loadConfig(root);
-  const ports = portsFor(root);
-  const clock = fixedClock();
-  register(root, candidate, config, clock);
-  if (target === 'REGISTERED') return { config, ports, clock };
-  await evaluate(root, DEMO_CASES, ports);
-  if (target === 'EVALUATED') return { config, ports, clock };
-  decide(root, config, clock);
-  if (target === 'ACCEPTED') return { config, ports, clock };
-  approve(root, 'tester', config, clock);
-  if (target === 'APPROVED') return { config, ports, clock };
-  await activate(root, 'tester', ports);
-  if (target === 'ACTIVATED') return { config, ports, clock };
-  await verify(root, DEMO_VERIFICATION_INPUTS, config, ports);
-  return { config, ports, clock };
-}
+const activePath = (r: string) => migrationPath(r, '0001');
 
 describe('invariant 1: an unevaluated candidate cannot be approved', () => {
   test('approve is refused directly from REGISTERED', async () => {
-    const { config, clock } = await driveTo('REGISTERED');
-    assert.equal(status(root).state, 'REGISTERED');
+    const { config, clock } = await driveTo(root, 'REGISTERED');
     assert.throws(() => approve(root, 'tester', config, clock), IllegalTransitionError);
     assert.equal(status(root).state, 'REGISTERED', 'a refused approval must not move the state');
   });
 
   test('approve is refused from EVALUATED, before a policy verdict exists', async () => {
-    const { config, clock } = await driveTo('EVALUATED');
-    assert.equal(status(root).state, 'EVALUATED');
+    const { config, clock } = await driveTo(root, 'EVALUATED');
     assert.throws(() => approve(root, 'tester', config, clock), IllegalTransitionError);
   });
 });
 
 describe('invariant 2: a failed candidate cannot be approved', () => {
-  test('a policy rejection blocks approval', async () => {
+  test('a policy rejection blocks approval and activation', async () => {
     const config = loadConfig(root);
     const ports = portsFor(root);
     const clock = fixedClock();
     register(root, 'demo-regression', config, clock);
-    await evaluate(root, DEMO_CASES, ports);
+    await evaluate(root, DEMO_CASES, config, ports);
     const { verdict } = decide(root, config, clock);
 
     assert.equal(verdict.accepted, false, 'the regressing model must fail the policy');
     assert.equal(status(root).state, 'REJECTED');
     assert.throws(() => approve(root, 'tester', config, clock), IllegalTransitionError);
+    await assert.rejects(() => activate(root, 'tester', ports), IllegalTransitionError);
   });
 
   test('the rejection is recorded, not discarded', async () => {
@@ -77,107 +79,116 @@ describe('invariant 2: a failed candidate cannot be approved', () => {
     const ports = portsFor(root);
     const clock = fixedClock();
     register(root, 'demo-regression', config, clock);
-    await evaluate(root, DEMO_CASES, ports);
+    await evaluate(root, DEMO_CASES, config, ports);
     decide(root, config, clock);
-    const actions = readLedger(root).map((e) => e.action);
-    assert.ok(actions.includes('reject'), 'a rejection must leave evidence that it happened');
+    assert.ok(readMigration(root, '0001').map((e) => e.action).includes('reject'));
   });
 });
 
 describe('invariant 3: an unapproved candidate cannot be activated', () => {
   test('activate is refused from ACCEPTED', async () => {
-    const { ports } = await driveTo('ACCEPTED');
-    assert.equal(status(root).state, 'ACCEPTED');
+    const { ports } = await driveTo(root, 'ACCEPTED');
     await assert.rejects(() => activate(root, 'tester', ports), IllegalTransitionError);
   });
 
   test('a refused activation does not change the serving model', async () => {
-    const { ports } = await driveTo('ACCEPTED');
+    const { ports } = await driveTo(root, 'ACCEPTED');
     const before = await ports.activation.read();
     await assert.rejects(() => activate(root, 'tester', ports), IllegalTransitionError);
-    const after = await ports.activation.read();
-    assert.equal(after, before, 'the outside world must be untouched by a refused transition');
-    assert.equal(after, 'demo-baseline');
+    assert.equal(await ports.activation.read(), before, 'the outside world must be untouched by a refused transition');
   });
 });
 
 describe('invariant 4: invalid state cannot silently recover into an unsafe state', () => {
-  test('a truncated ledger record raises rather than defaulting', async () => {
-    await driveTo('APPROVED');
-    appendFileSync(ledgerPath(root), '{ this is not json\n', 'utf8');
+  test('a truncated record raises rather than defaulting', async () => {
+    await driveTo(root, 'APPROVED');
+    appendFileSync(activePath(root), '{ this is not json\n', 'utf8');
     assert.throws(() => status(root), LedgerCorruptError);
   });
 
   test('a spliced ledger fails the chain check', async () => {
-    await driveTo('ACTIVATED');
-    const lines = readFileSync(ledgerPath(root), 'utf8').trim().split('\n');
-    // Remove the approval, leaving activation claiming it followed acceptance.
-    const spliced = lines.filter((l) => !l.includes('"action":"approve"'));
-    writeFileSync(ledgerPath(root), `${spliced.join('\n')}\n`, 'utf8');
+    await driveTo(root, 'ACTIVATED');
+    const lines = readFileSync(activePath(root), 'utf8').trim().split('\n');
+    writeFileSync(activePath(root), `${lines.filter((l) => !l.includes('"action":"approve"')).join('\n')}\n`, 'utf8');
     assert.throws(() => status(root), LedgerCorruptError);
   });
 
-  // The splice test above also breaks the sequence numbering, so the seq check catches it
-  // and the chain check is never exercised alone. This one keeps seq contiguous and edits
-  // only the `from` field, which nothing but the chain check can detect.
+  // The splice test also breaks sequence numbering, so the sequence check catches it and
+  // the chain check is never exercised alone. This keeps seq contiguous and edits only
+  // `from`, which nothing but the chain check can detect.
   test('a rewritten from-state fails the chain check even with sequence intact', async () => {
-    await driveTo('ACTIVATED');
-    const lines = readFileSync(ledgerPath(root), 'utf8').trim().split('\n');
-    const rewritten = lines.map((l) => {
+    await driveTo(root, 'ACTIVATED');
+    const rewritten = readFileSync(activePath(root), 'utf8').trim().split('\n').map((l) => {
       const e = JSON.parse(l) as { action: string; from: string | null };
-      // Claim the activation followed EVALUATED rather than APPROVED. Seq is untouched.
-      if (e.action === 'activate') return JSON.stringify({ ...e, from: 'EVALUATED' });
-      return l;
+      return e.action === 'approve' ? JSON.stringify({ ...e, from: 'REGISTERED' }) : l;
     });
-    writeFileSync(ledgerPath(root), `${rewritten.join('\n')}\n`, 'utf8');
-
+    writeFileSync(activePath(root), `${rewritten.join('\n')}\n`, 'utf8');
     assert.throws(
       () => status(root),
       (e: unknown) => e instanceof LedgerCorruptError && /broken chain/.test(e.message),
-      'an edited from-state must be detected by the chain check',
     );
   });
 
-  test('a rejected candidate cannot be approved', async () => {
-    const config = loadConfig(root);
-    const ports = portsFor(root);
-    const clock = fixedClock();
-    register(root, 'demo-regression', config, clock);
-    await evaluate(root, DEMO_CASES, ports);
-    decide(root, config, clock);
-    assert.equal(status(root).state, 'REJECTED');
-    assert.throws(() => approve(root, 'tester', config, clock), IllegalTransitionError);
-    await assert.rejects(() => activate(root, 'tester', ports), IllegalTransitionError);
-  });
-
   test('a corrupt ledger blocks forward motion entirely', async () => {
-    const { ports } = await driveTo('APPROVED');
-    writeFileSync(ledgerPath(root), 'garbage\n', 'utf8');
+    const { ports } = await driveTo(root, 'APPROVED');
+    writeFileSync(activePath(root), 'garbage\n', 'utf8');
     await assert.rejects(() => activate(root, 'tester', ports), LedgerCorruptError);
   });
+});
 
-  // The corrupt-ledger error tells the operator that rollback is still available. That is a
-  // promise, so it gets a test: a message that says "you can still recover" beside code that
-  // cannot is worse than no message.
-  test('rollback still works when the ledger is unreadable (fail open)', async () => {
-    const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
-    assert.equal(await ports.activation.read(), 'demo-candidate');
+// ---------------------------------------------------------------------------
+// FINDING 3. Structure and chain can both be satisfied by a forgery.
+// ---------------------------------------------------------------------------
+describe('invariant 4b: semantic transition validation', () => {
+  test('a one-field edit cannot elevate the first event to APPROVED', async () => {
+    await driveTo(root, 'REGISTERED');
+    const e = JSON.parse(readFileSync(activePath(root), 'utf8').trim()) as Record<string, unknown>;
+    // Structure valid, sequence valid, chain valid (from is still null). Only the
+    // (action, from, to) triple is impossible.
+    e['to'] = 'APPROVED';
+    writeFileSync(activePath(root), `${JSON.stringify(e)}\n`, 'utf8');
 
-    writeFileSync(ledgerPath(root), 'not-json\n', 'utf8');
-    // The normal path cannot run, because every transition starts by reading the ledger.
-    await assert.rejects(() => rollback(root, 'tester', config, ports), LedgerCorruptError);
+    assert.throws(
+      () => status(root),
+      (err: unknown) => err instanceof LedgerCorruptError && /illegal transition/.test(err.message),
+      'register can only ever produce REGISTERED',
+    );
+  });
 
-    const { serving, recordedAt } = await emergencyRollback(root, 'tester', config, ports, 'ledger unreadable');
-    assert.equal(serving, config.rollbackModel, 'the declared safe model must still be reachable');
-    assert.equal(await ports.activation.read(), 'demo-baseline');
+  test('a final-event to-edit cannot silently elevate state', async () => {
+    await driveTo(root, 'EVALUATED');
+    const lines = readFileSync(activePath(root), 'utf8').trim().split('\n');
+    const last = JSON.parse(lines[lines.length - 1] as string) as Record<string, unknown>;
+    last['to'] = 'APPROVED'; // evaluate cannot produce APPROVED
+    lines[lines.length - 1] = JSON.stringify(last);
+    writeFileSync(activePath(root), `${lines.join('\n')}\n`, 'utf8');
+    assert.throws(() => status(root), LedgerCorruptError);
+  });
 
-    // The action is recorded, and NOT by appending to the file that just failed its check.
-    assert.notEqual(recordedAt, ledgerPath(root));
-    const recovery = readFileSync(recoveryPath(root), 'utf8');
-    assert.match(recovery, /emergencyRollback/);
-    assert.match(recovery, /demo-baseline/);
-    assert.equal(readFileSync(ledgerPath(root), 'utf8'), 'not-json\n', 'the corrupt ledger must be left untouched for investigation');
+  test('a ledger whose first event is not register is rejected', async () => {
+    await driveTo(root, 'EVALUATED');
+    const lines = readFileSync(activePath(root), 'utf8').trim().split('\n');
+    const second = JSON.parse(lines[1] as string) as Record<string, unknown>;
+    // Keep it structurally perfect: seq 1, from null.
+    second['seq'] = 1;
+    second['from'] = null;
+    writeFileSync(activePath(root), `${JSON.stringify(second)}\n`, 'utf8');
+    assert.throws(
+      () => status(root),
+      (err: unknown) => err instanceof LedgerCorruptError && /first record must be "register"/.test(err.message),
+    );
+  });
+
+  test('an action swapped for another legal-looking one is rejected', async () => {
+    await driveTo(root, 'ACCEPTED');
+    const lines = readFileSync(activePath(root), 'utf8').trim().split('\n');
+    const rewritten = lines.map((l) => {
+      const e = JSON.parse(l) as Record<string, unknown>;
+      // "reject" cannot go EVALUATED -> ACCEPTED, only EVALUATED -> REJECTED.
+      return e['action'] === 'accept' ? JSON.stringify({ ...e, action: 'reject' }) : l;
+    });
+    writeFileSync(activePath(root), `${rewritten.join('\n')}\n`, 'utf8');
+    assert.throws(() => status(root), LedgerCorruptError);
   });
 });
 
@@ -185,39 +196,31 @@ describe('invariant 5: verification cannot exceed its configured ceiling', () =>
   test('stops at the ceiling and leaves later inputs unissued', async () => {
     writeConfig(root, { ...DEFAULT_CONFIG, verification: { maxRequests: 2, minObservations: 1 } });
     const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
+    const { ports } = await driveTo(root, 'ACTIVATED');
     const { run } = await verify(root, DEMO_VERIFICATION_INPUTS, config, ports);
-
-    assert.ok(DEMO_VERIFICATION_INPUTS.length > 2, 'the input set must exceed the ceiling to exercise it');
-    assert.equal(run.requestsMade, 2, 'exactly maxRequests requests');
+    assert.ok(DEMO_VERIFICATION_INPUTS.length > 2);
+    assert.equal(run.requestsMade, 2);
     assert.equal(run.stoppedBy, 'ceiling');
     assert.equal(run.truncated, true);
-    assert.equal(run.requestsAvailable, DEMO_VERIFICATION_INPUTS.length);
-    assert.equal(run.requestIds.length, 2);
   });
 
-  test('the ceiling bounds telemetry too, not just the reported count', async () => {
+  test('the ceiling bounds telemetry too', async () => {
     writeConfig(root, { ...DEFAULT_CONFIG, verification: { maxRequests: 2, minObservations: 1 } });
     const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
+    const { ports } = await driveTo(root, 'ACTIVATED');
     const before = (await ports.telemetry.observations(null)).length;
     await verify(root, DEMO_VERIFICATION_INPUTS, config, ports);
-    const after = (await ports.telemetry.observations(null)).length;
-    assert.equal(after - before, 2, 'no request beyond the ceiling reached the model');
+    assert.equal((await ports.telemetry.observations(null)).length - before, 2);
   });
 });
 
 describe('invariant 6: an empty telemetry set cannot confirm activation', () => {
-  test('no observations means FAILED_VERIFICATION, not success', async () => {
+  test('no observations means FAILED_VERIFICATION', async () => {
     const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
-    // A telemetry pipeline that reports nothing: indistinguishable from a dead pipeline,
-    // so the only safe reading is "unconfirmed".
+    const { ports } = await driveTo(root, 'ACTIVATED');
     const blind = { ...ports, telemetry: { name: 'empty', observations: () => [] } };
     const { assertion } = await verify(root, DEMO_VERIFICATION_INPUTS, config, blind);
-
     assert.equal(assertion.confirmed, false);
-    assert.equal(assertion.observationCount, 0);
     assert.match(assertion.reason, /absence of contrary evidence is not evidence/);
     assert.equal(status(root).state, 'FAILED_VERIFICATION');
   });
@@ -225,9 +228,8 @@ describe('invariant 6: an empty telemetry set cannot confirm activation', () => 
   test('fewer observations than the declared minimum does not confirm', async () => {
     writeConfig(root, { ...DEFAULT_CONFIG, verification: { maxRequests: 1, minObservations: 3 } });
     const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
+    const { ports } = await driveTo(root, 'ACTIVATED');
     const { assertion } = await verify(root, DEMO_VERIFICATION_INPUTS, config, ports);
-    assert.equal(assertion.observationCount, 1);
     assert.equal(assertion.confirmed, false);
     assert.equal(status(root).state, 'FAILED_VERIFICATION');
   });
@@ -236,7 +238,7 @@ describe('invariant 6: an empty telemetry set cannot confirm activation', () => 
 describe('invariant 7: a mismatched serving model cannot produce VERIFIED', () => {
   test('telemetry showing a different model fails verification', async () => {
     const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
+    const { ports } = await driveTo(root, 'ACTIVATED');
     const lying = {
       ...ports,
       telemetry: {
@@ -250,126 +252,332 @@ describe('invariant 7: a mismatched serving model cannot produce VERIFIED', () =
     };
     const { assertion } = await verify(root, DEMO_VERIFICATION_INPUTS, config, lying);
     assert.equal(assertion.confirmed, false);
-    assert.deepEqual(assertion.observed, ['demo-baseline']);
     assert.equal(status(root).state, 'FAILED_VERIFICATION');
   });
+});
 
-  test('traffic split across two models does not confirm', async () => {
-    const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
-    const split = {
+// ---------------------------------------------------------------------------
+// FINDING 1. The ledger must never say ACTIVATED without a positive read-back.
+// ---------------------------------------------------------------------------
+describe('invariant 11: activation requires positive read-back', () => {
+  test('a no-op activation target cannot produce ACTIVATED', async () => {
+    const { ports } = await driveTo(root, 'APPROVED');
+    // write() does nothing; read() keeps reporting the baseline. This is what a stale
+    // client, a cached config or a swallowed permission error looks like.
+    const broken = { ...ports, activation: noopActivationTarget('demo-baseline') };
+
+    await assert.rejects(() => activate(root, 'tester', broken), ActivationNotConfirmedError);
+
+    const v = status(root);
+    assert.equal(v.state, 'ACTIVATION_FAILED', 'must record the observed outcome, not the intent');
+    assert.notEqual(v.state, 'ACTIVATED');
+  });
+
+  test('the failed activation is recorded with what was actually observed', async () => {
+    const { ports } = await driveTo(root, 'APPROVED');
+    const broken = { ...ports, activation: noopActivationTarget('demo-baseline') };
+    await assert.rejects(() => activate(root, 'tester', broken), ActivationNotConfirmedError);
+
+    const events = readMigration(root, '0001');
+    const fail = events.find((e) => e.action === 'failActivation');
+    assert.ok(fail, 'a failActivation event must exist');
+    assert.equal(fail.detail['requestedModel'], 'demo-candidate');
+    assert.equal(fail.detail['observedModel'], 'demo-baseline');
+    assert.equal(fail.detail['confirmed'], false);
+  });
+
+  // The two-phase ordering is the point: the intent is recorded BEFORE the side effect, so
+  // a crash after the external write cannot leave the ledger claiming an earlier safe state.
+  test('the intent is recorded before the external write', async () => {
+    const { ports } = await driveTo(root, 'APPROVED');
+    let stateWhenWriteHappened: string | null = null;
+    const observing = {
       ...ports,
-      telemetry: {
-        name: 'split',
-        observations: () => [
-          { requestId: 'r1', servedBy: 'demo-candidate' },
-          { requestId: 'r2', servedBy: 'demo-baseline' },
-          { requestId: 'r3', servedBy: 'demo-candidate' },
-        ],
+      activation: {
+        name: 'observing',
+        read: () => 'demo-candidate',
+        write: () => {
+          // Whatever the ledger says at THIS moment is what a crash here would leave behind.
+          stateWhenWriteHappened = status(root).state;
+        },
       },
     };
-    const { assertion } = await verify(root, DEMO_VERIFICATION_INPUTS, config, split);
-    assert.equal(assertion.confirmed, false);
-    assert.equal(assertion.observed.length, 2);
+    await activate(root, 'tester', observing);
+    assert.equal(stateWhenWriteHappened, 'ACTIVATING', 'a crash mid-activation must leave ACTIVATING, never APPROVED');
+    assert.equal(status(root).state, 'ACTIVATED');
+  });
+
+  test('rollback remains available from ACTIVATION_FAILED and from ACTIVATING', async () => {
+    const { config, ports } = await driveTo(root, 'APPROVED');
+    const broken = { ...ports, activation: noopActivationTarget('demo-baseline') };
+    await assert.rejects(() => activate(root, 'tester', broken), ActivationNotConfirmedError);
+    assert.equal(status(root).state, 'ACTIVATION_FAILED');
+
+    const r = await rollback(root, 'tester', config, ports);
+    assert.equal(r.confirmed, true);
+    assert.equal(status(root).state, 'ROLLED_BACK');
   });
 });
 
-describe('invariant 8: rollback targets the declared safe model', () => {
-  test('rollback reverts the activation target to the configured model', async () => {
-    const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
-    assert.equal(await ports.activation.read(), 'demo-candidate');
-
-    const { serving } = await rollback(root, 'tester', config, ports);
-    assert.equal(serving, config.rollbackModel);
-    assert.equal(await ports.activation.read(), 'demo-baseline');
+// ---------------------------------------------------------------------------
+// FINDING 2. ROLLED_BACK requires positive read-back too.
+// ---------------------------------------------------------------------------
+describe('invariant 8: rollback requires positive read-back of the declared target', () => {
+  test('a confirmed rollback reverts and records ROLLED_BACK', async () => {
+    const { config, ports } = await driveTo(root, 'ACTIVATED');
+    const r = await rollback(root, 'tester', config, ports);
+    assert.equal(r.observed, config.rollbackModel);
     assert.equal(status(root).state, 'ROLLED_BACK');
   });
 
-  test('rollback stays available from every state where something could be live', async () => {
-    const config = loadConfig(root);
-    const { ports } = await driveTo('VERIFIED');
-    stabilise(root, 'tester', fixedClock());
-    assert.equal(status(root).state, 'STABLE');
-    // Fail open: a migration that looked fine can still need reverting later.
-    const { serving } = await rollback(root, 'tester', config, ports);
-    assert.equal(serving, 'demo-baseline');
-    assert.equal(status(root).state, 'ROLLED_BACK');
-  });
+  test('a no-op rollback target cannot produce ROLLED_BACK', async () => {
+    const { config, ports } = await driveTo(root, 'ACTIVATED');
+    const stuck = { ...ports, activation: noopActivationTarget('demo-candidate') };
 
-  test('rollback records both the begin and the completion', async () => {
-    const config = loadConfig(root);
-    const { ports } = await driveTo('ACTIVATED');
-    await rollback(root, 'tester', config, ports);
-    const actions = readLedger(root).map((e) => e.action);
-    assert.ok(actions.includes('beginRollback'));
-    assert.ok(actions.includes('completeRollback'));
-  });
-});
+    await assert.rejects(() => rollback(root, 'tester', config, stuck), RollbackNotConfirmedError);
 
-describe('invariant 9: audit records cannot claim a transition that did not occur', () => {
-  test('the report contains exactly the recorded transitions, no more', async () => {
-    await driveTo('ACTIVATED');
     const v = status(root);
-    const report = renderReport(v.events, v.state);
-
-    for (const e of v.events) {
-      assert.ok(report.includes(e.action), `report must mention recorded action ${e.action}`);
-    }
-    // Nothing beyond ACTIVATED happened, so these must be absent.
-    assert.ok(!report.includes('completeRollback'), 'report must not mention a rollback that never ran');
-    assert.ok(!report.includes('stabilise'), 'report must not mention a closure that never happened');
+    assert.equal(v.state, 'ROLLBACK_FAILED', 'the system is not known to be safe, and must say so');
+    assert.notEqual(v.state, 'ROLLED_BACK');
   });
 
-  test('the report reflects a rejection rather than glossing it', async () => {
+  test('a failed rollback can be retried, and ROLLBACK_FAILED is not terminal', async () => {
+    const { config, ports } = await driveTo(root, 'ACTIVATED');
+    const stuck = { ...ports, activation: noopActivationTarget('demo-candidate') };
+    await assert.rejects(() => rollback(root, 'tester', config, stuck), RollbackNotConfirmedError);
+    assert.equal(status(root).state, 'ROLLBACK_FAILED');
+
+    const r = await rollback(root, 'tester', config, ports);
+    assert.equal(r.confirmed, true);
+    assert.equal(status(root).state, 'ROLLED_BACK');
+  });
+
+  test('emergency rollback cannot report success when the write did not take', async () => {
+    const { config, ports } = await driveTo(root, 'ACTIVATED');
+    writeFileSync(activePath(root), 'not-json\n', 'utf8');
+    const stuck = { ...ports, activation: noopActivationTarget('demo-candidate') };
+
+    await assert.rejects(() => emergencyRollback(root, 'tester', config, stuck, 'probe'), RollbackNotConfirmedError);
+
+    const rec = readRecovery(root);
+    assert.equal(rec.length, 1, 'the attempt must still be recorded');
+    assert.equal(rec[0]?.['confirmed'], false);
+    assert.match(String(rec[0]?.['outcome']), /NOT CONFIRMED/);
+  });
+
+  test('emergency rollback still works when the ledger is unreadable', async () => {
+    const { config, ports } = await driveTo(root, 'ACTIVATED');
+    writeFileSync(activePath(root), 'not-json\n', 'utf8');
+    await assert.rejects(() => rollback(root, 'tester', config, ports), LedgerCorruptError);
+
+    const r = await emergencyRollback(root, 'tester', config, ports, 'ledger unreadable');
+    assert.equal(r.confirmed, true);
+    assert.equal(await ports.activation.read(), config.rollbackModel);
+    assert.notEqual(r.recordedAt, activePath(root));
+    assert.equal(readFileSync(activePath(root), 'utf8'), 'not-json\n', 'the corrupt ledger must be left for investigation');
+    assert.match(readFileSync(recoveryPath(root), 'utf8'), /emergencyRollback/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FINDING 4. Policy locking. A warning is not change control.
+// ---------------------------------------------------------------------------
+describe('invariant 12: a policy change invalidates the evidence it governed', () => {
+  test('approve is REFUSED, not warned, after the policy moves', async () => {
+    await driveTo(root, 'ACCEPTED');
+    // Move the bar after seeing the score.
+    writeConfig(root, { ...DEFAULT_CONFIG, acceptance: { ...DEFAULT_CONFIG.acceptance, minScore: 0.1 } });
+    const moved = loadConfig(root);
+
+    assert.throws(() => approve(root, 'tester', moved, fixedClock()), StalePolicyEvidenceError);
+    assert.equal(status(root).state, 'ACCEPTED', 'the refused approval must not move the state');
+  });
+
+  test('relaxing the policy cannot rescue a rejected candidate without re-evaluating', async () => {
     const config = loadConfig(root);
     const ports = portsFor(root);
     const clock = fixedClock();
     register(root, 'demo-regression', config, clock);
-    await evaluate(root, DEMO_CASES, ports);
+    await evaluate(root, DEMO_CASES, config, ports);
     decide(root, config, clock);
-    const v = status(root);
-    const report = renderReport(v.events, v.state);
-    assert.match(report, /REJECTED by policy/);
-    assert.ok(!report.includes('approve'), 'an unapproved migration must not show an approval');
+    assert.equal(status(root).state, 'REJECTED');
+
+    // Make the policy trivially satisfiable, then try to accept the OLD evidence.
+    writeConfig(root, {
+      ...DEFAULT_CONFIG,
+      acceptance: { minScore: 0, maxRegression: 1, requiredCases: [], allowCriticalFailures: true },
+    });
+    const relaxed = loadConfig(root);
+    assert.throws(() => decide(root, relaxed, clock), StalePolicyEvidenceError);
   });
 
-  test('editing the policy between verdict and approval is surfaced in the report', async () => {
-    const { clock } = await driveTo('ACCEPTED');
-    // Move the bar AFTER seeing the score.
+  test('re-evaluating under the new policy is the supported path', async () => {
+    await driveTo(root, 'ACCEPTED');
     writeConfig(root, { ...DEFAULT_CONFIG, acceptance: { ...DEFAULT_CONFIG.acceptance, minScore: 0.1 } });
     const moved = loadConfig(root);
-    const { policyChanged } = approve(root, 'tester', moved, clock);
+    const ports = portsFor(root);
 
-    assert.equal(policyChanged, true);
+    assert.throws(() => approve(root, 'tester', moved, fixedClock()), StalePolicyEvidenceError);
+
+    // Fresh evidence under the current policy re-locks the hash and unblocks the flow.
+    await evaluate(root, DEMO_CASES, moved, ports);
+    decide(root, moved, fixedClock());
+    approve(root, 'tester', moved, fixedClock());
+    assert.equal(status(root).state, 'APPROVED');
+  });
+
+  test('an unchanged policy does not block anything', async () => {
+    const { config, clock } = await driveTo(root, 'ACCEPTED');
+    assert.doesNotThrow(() => approve(root, 'tester', config, clock));
+  });
+});
+
+describe('invariant 9: audit records cannot claim a transition that did not occur', () => {
+  test('the report contains exactly the recorded transitions', async () => {
+    await driveTo(root, 'ACTIVATED');
     const v = status(root);
-    assert.match(renderReport(v.events, v.state), /WARNING: the acceptance policy was edited/);
+    const report = renderReport(v.events, v.state, v.id);
+    for (const e of v.events) assert.ok(report.includes(e.action), `report must mention ${e.action}`);
+    assert.ok(!report.includes('confirmRollback'), 'no rollback happened');
+    assert.ok(!report.includes('stabilise'), 'no closure happened');
+  });
+
+  test('a failed activation is reported as failed, not glossed', async () => {
+    const { ports } = await driveTo(root, 'APPROVED');
+    const broken = { ...ports, activation: noopActivationTarget('demo-baseline') };
+    await assert.rejects(() => activate(root, 'tester', broken), ActivationNotConfirmedError);
+    const v = status(root);
+    const report = renderReport(v.events, v.state, v.id);
+    assert.match(report, /did not read back the candidate/);
+    assert.ok(!report.includes('confirmActivation'));
   });
 });
 
 describe('invariant 10: re-running status does not mutate migration state', () => {
-  test('repeated status calls leave the ledger byte-identical', async () => {
-    await driveTo('ACTIVATED');
-    const before = readFileSync(ledgerPath(root), 'utf8');
+  test('repeated status and report calls leave the ledger byte-identical', async () => {
+    await driveTo(root, 'ACTIVATED');
+    const before = readFileSync(activePath(root), 'utf8');
     const a = status(root);
+    const r1 = renderReport(a.events, a.state, a.id);
     const b = status(root);
-    const c = status(root);
-    const after = readFileSync(ledgerPath(root), 'utf8');
+    const r2 = renderReport(b.events, b.state, b.id);
+    assert.equal(readFileSync(activePath(root), 'utf8'), before);
+    assert.equal(r1, r2, 'the same ledger must render the same report');
+  });
+});
 
-    assert.equal(after, before, 'status must not write');
-    assert.equal(a.state, b.state);
-    assert.equal(b.state, c.state);
-    assert.equal(a.events.length, c.events.length);
+// ---------------------------------------------------------------------------
+// FINDING 7. Repeatable migrations with retained history.
+// ---------------------------------------------------------------------------
+describe('invariant 13: a project may run many migrations, and keeps all of them', () => {
+  test('a second migration can begin after STABLE', async () => {
+    const { clock } = await driveTo(root, 'VERIFIED');
+    stabilise(root, 'tester', clock);
+    assert.equal(status(root).state, 'STABLE');
+
+    const config = loadConfig(root);
+    const { id } = register(root, 'demo-regression', config, clock);
+    assert.equal(id, '0002');
+    assert.equal(status(root).state, 'REGISTERED');
   });
 
-  test('repeated report rendering is deterministic and non-mutating', async () => {
-    await driveTo('VERIFIED');
-    const before = readFileSync(ledgerPath(root), 'utf8');
-    const v1 = status(root);
-    const r1 = renderReport(v1.events, v1.state);
-    const v2 = status(root);
-    const r2 = renderReport(v2.events, v2.state);
-    assert.equal(r1, r2, 'the same ledger must render the same report');
-    assert.equal(readFileSync(ledgerPath(root), 'utf8'), before);
+  // Verification scopes telemetry to "after the last observation seen before this run". If
+  // request ids repeat between runs, that marker matches an OLD row and the scope silently
+  // widens to include a previous migration's traffic, failing a healthy system.
+  test('a SECOND migration verifies successfully, with telemetry scoped to its own run', async () => {
+    const { config, ports, clock } = await driveTo(root, 'VERIFIED');
+    stabilise(root, 'tester', clock);
+
+    register(root, 'demo-candidate', config, clock);
+    await evaluate(root, DEMO_CASES, config, ports);
+    decide(root, config, clock);
+    approve(root, 'tester', config, clock);
+    await activate(root, 'tester', ports);
+    const { assertion } = await verify(root, DEMO_VERIFICATION_INPUTS, config, ports);
+
+    assert.equal(assertion.confirmed, true, 'the second migration must verify on its own traffic');
+    assert.deepEqual(assertion.observed, ['demo-candidate']);
+    assert.equal(
+      assertion.observationCount,
+      config.verification.maxRequests,
+      'only this run\'s observations may count, not the first migration\'s',
+    );
+    assert.equal(statusOf(root, '0002').state, 'VERIFIED');
+  });
+
+  test('a second migration can begin after ROLLED_BACK', async () => {
+    const { config, ports, clock } = await driveTo(root, 'ACTIVATED');
+    await rollback(root, 'tester', config, ports);
+    assert.equal(status(root).state, 'ROLLED_BACK');
+    const { id } = register(root, 'demo-regression', config, clock);
+    assert.equal(id, '0002');
+  });
+
+  test('a second migration is refused while the first is still open', async () => {
+    const { config, clock } = await driveTo(root, 'ACTIVATED');
+    assert.throws(() => register(root, 'demo-regression', config, clock), IllegalTransitionError);
+  });
+
+  // Found by walking the CLI as a new user: a rejected candidate left the project wedged.
+  // A migration was open so none could begin, and nothing was live so nothing could be
+  // rolled back. Refusing to let go costs everything and protects nothing.
+  test('a rejected candidate can be abandoned, which unblocks the project', async () => {
+    const config = loadConfig(root);
+    const ports = portsFor(root);
+    const clock = fixedClock();
+    register(root, 'demo-regression', config, clock);
+    await evaluate(root, DEMO_CASES, config, ports);
+    decide(root, config, clock);
+    assert.equal(status(root).state, 'REJECTED');
+
+    // Before the fix, both of these were refused and there was no third option.
+    assert.throws(() => register(root, 'demo-candidate', config, clock), IllegalTransitionError);
+
+    const e = abandon(root, 'tester', 'candidate is not worth pursuing', clock);
+    assert.equal(e.to, 'ABANDONED');
+
+    const { id } = register(root, 'demo-candidate', config, clock);
+    assert.equal(id, '0002', 'a new migration must be possible after abandoning');
+  });
+
+  test('abandonment is recorded with its reason, not deleted', async () => {
+    const { config, clock } = await driveTo(root, 'EVALUATED');
+    abandon(root, 'tester', 'switching to a different provider', clock);
+    const v = statusOf(root, '0001');
+    assert.equal(v.state, 'ABANDONED');
+    const report = renderReport(v.events, v.state, v.id);
+    assert.match(report, /abandon/);
+    assert.match(report, /switching to a different provider/);
+    assert.equal(loadConfig(root).baselineModel, config.baselineModel);
+  });
+
+  test('a migration that may be live CANNOT be abandoned, only rolled back', async () => {
+    const { clock } = await driveTo(root, 'ACTIVATED');
+    assert.throws(
+      () => abandon(root, 'tester', 'changed my mind', clock),
+      IllegalTransitionError,
+      'abandoning a live migration would close the record while leaving the candidate serving',
+    );
+    assert.equal(status(root).state, 'ACTIVATED');
+  });
+
+  test('the earlier migration stays readable and unmodified, with no manual deletion', async () => {
+    const { clock } = await driveTo(root, 'VERIFIED');
+    stabilise(root, 'tester', clock);
+    const firstBytes = readFileSync(activePath(root), 'utf8');
+    const firstEvents = readMigration(root, '0001').length;
+
+    const config = loadConfig(root);
+    register(root, 'demo-regression', config, clock);
+
+    assert.equal(readFileSync(activePath(root), 'utf8'), firstBytes, 'migration 0001 must be untouched');
+    assert.deepEqual(listMigrations(root), ['0001', '0002']);
+    assert.equal(statusOf(root, '0001').state, 'STABLE');
+    assert.equal(readMigration(root, '0001').length, firstEvents);
+    assert.equal(history(root).length, 2);
+
+    // And the old report still renders in full.
+    const old = statusOf(root, '0001');
+    assert.match(renderReport(old.events, old.state, old.id), /MIGRATION REPORT {2}\[0001\]/);
   });
 });

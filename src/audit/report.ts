@@ -4,15 +4,21 @@
 // transition that was not recorded, and it cannot omit one that was. If a step is missing
 // from the report it is missing from the record, which is itself the finding.
 //
+// Every value that came from outside the framework is passed through `escapeForReport`
+// before rendering. Identifiers are already rejected at their boundaries, but adapter
+// labels and evaluator names arrive from third-party code, and a newline in any of them
+// would forge a line of a document people make decisions from.
+//
 // Written for three readers who will not have this context: a code reviewer, someone in an
 // incident an hour after it started, and an auditor asking who authorised a change.
 
 import type { ComparativeEvaluation, MigrationEvent, MigrationState } from '../domain/types.ts';
 import type { AcceptanceVerdict } from '../policy/acceptance.ts';
-import { TERMINAL_STATES } from '../domain/types.ts';
+import { TERMINAL_STATES, LIVE_RISK_STATES } from '../domain/types.ts';
+import { escapeForReport } from '../domain/sanitize.ts';
 
 function line(label: string, value: string): string {
-  return `${label.padEnd(22)}${value}`;
+  return `${label.padEnd(22)}${escapeForReport(value)}`;
 }
 
 function renderEvaluation(e: ComparativeEvaluation): string[] {
@@ -21,6 +27,7 @@ function renderEvaluation(e: ComparativeEvaluation): string[] {
     line('  candidate', `${e.candidate.modelId}  score ${e.candidate.score.toFixed(3)} (${e.candidate.passed}/${e.candidate.casesRun})`),
     line('  delta', `${e.delta >= 0 ? '+' : ''}${e.delta.toFixed(3)}`),
     line('  case set hash', e.caseSetHash),
+    line('  governing policy', e.governingPolicyHash),
   ];
   if (e.candidate.criticalFailures.length > 0) {
     out.push(line('  critical failures', e.candidate.criticalFailures.join(', ')));
@@ -35,9 +42,13 @@ function renderVerdict(v: AcceptanceVerdict): string[] {
   return out;
 }
 
-export function renderReport(events: readonly MigrationEvent[], state: MigrationState | null): string {
+function s(v: unknown, fallback = 'unknown'): string {
+  return v === undefined || v === null ? fallback : String(v);
+}
+
+export function renderReport(events: readonly MigrationEvent[], state: MigrationState | null, migrationId = '0001'): string {
   const out: string[] = [];
-  out.push('MIGRATION REPORT');
+  out.push(`MIGRATION REPORT  [${escapeForReport(migrationId)}]`);
   out.push('='.repeat(72));
 
   if (events.length === 0 || state === null) {
@@ -46,43 +57,52 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
   }
 
   const first = events[0];
-  const candidate = first?.detail['candidate'];
-  const baseline = first?.detail['baseline'];
+  out.push(line('candidate', s(first?.detail['candidate'])));
+  out.push(line('previous model', s(first?.detail['baseline'])));
 
-  out.push(line('candidate', String(candidate ?? 'unknown')));
-  out.push(line('previous model', String(baseline ?? 'unknown')));
-  out.push(line('terminal state', `${state}${TERMINAL_STATES.includes(state) ? '' : '  (migration still open)'}`));
+  const closed = TERMINAL_STATES.includes(state);
+  const atRisk = LIVE_RISK_STATES.includes(state) && !closed;
+  out.push(line('terminal state', `${state}${closed ? '' : atRisk ? '  (OPEN, something may be serving)' : '  (migration still open)'}`));
   out.push(line('recorded events', String(events.length)));
   out.push('');
   out.push('TIMELINE');
   out.push('-'.repeat(72));
 
   for (const e of events) {
-    out.push(`${String(e.seq).padStart(3, '0')}  ${e.at}  ${e.action}`);
+    out.push(`${String(e.seq).padStart(3, '0')}  ${escapeForReport(e.at)}  ${escapeForReport(e.action)}`);
     out.push(line('     transition', `${e.from ?? '(none)'} -> ${e.to}`));
     out.push(line('     actor', e.actor));
 
+    if (e.action === 'register') {
+      out.push(line('  policy at register', s(e.detail['policyHashAtRegister'])));
+    }
     if (e.action === 'evaluate' && e.detail['evaluation']) {
       out.push(...renderEvaluation(e.detail['evaluation'] as ComparativeEvaluation));
-      out.push(line('  evaluator', String(e.detail['evaluator'] ?? 'unknown')));
+      out.push(line('  evaluator', s(e.detail['evaluator'])));
     }
     if ((e.action === 'accept' || e.action === 'reject') && e.detail['verdict']) {
       out.push(...renderVerdict(e.detail['verdict'] as AcceptanceVerdict));
-      out.push(line('  policy hash', String(e.detail['policyHash'] ?? 'unknown')));
+      out.push(line('  policy hash', s(e.detail['policyHash'])));
     }
     if (e.action === 'approve') {
-      out.push(line('  approved by', String(e.detail['approvedBy'] ?? 'unknown')));
-      out.push(line('  policy at accept', String(e.detail['policyHashAtAccept'] ?? 'none')));
-      out.push(line('  policy at approval', String(e.detail['policyHashAtApproval'] ?? 'none')));
-      if (e.detail['policyChanged'] === true) {
-        out.push('  *** WARNING: the acceptance policy was edited between the verdict and this approval.');
-        out.push('      The verdict above was earned under different rules than the ones now declared.');
-      }
+      out.push(line('  approved by', s(e.detail['approvedBy'])));
+      out.push(line('  policy hash', s(e.detail['policyHash'])));
     }
-    if (e.action === 'activate') {
-      out.push(line('  previous model', String(e.detail['previousModel'] ?? 'unknown')));
-      out.push(line('  target reports', String(e.detail['targetReports'] ?? 'unknown')));
-      out.push(line('  activation target', String(e.detail['target'] ?? 'unknown')));
+    if (e.action === 'beginActivation') {
+      out.push(line('  previous model', s(e.detail['previousModel'])));
+      out.push(line('  requested model', s(e.detail['requestedModel'])));
+      out.push(line('  activation target', s(e.detail['target'])));
+      out.push('  (intent recorded BEFORE the external write, so an interrupted activation');
+      out.push('   is visible rather than invisible)');
+    }
+    if (e.action === 'confirmActivation' || e.action === 'failActivation') {
+      out.push(line('  requested model', s(e.detail['requestedModel'])));
+      out.push(line('  target read back', s(e.detail['observedModel'])));
+      out.push(line('  confirmed', e.detail['confirmed'] === true ? 'YES, by read-back' : 'NO'));
+      if (e.action === 'failActivation') {
+        out.push('  *** The activation target did not read back the candidate. Nothing was');
+        out.push('      confirmed live. This migration never reached ACTIVATED.');
+      }
     }
     if (e.action === 'verify' || e.action === 'failVerification') {
       const run = e.detail['run'] as { requestsMade?: number; requestsAvailable?: number; stoppedBy?: string; truncated?: boolean } | undefined;
@@ -95,13 +115,26 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
         out.push(line('  telemetry observed', (a.observed ?? []).join(', ') || '(none)'));
         out.push(line('  observations', String(a.observationCount ?? 0)));
         out.push(line('  confirmed', a.confirmed === true ? 'YES' : 'NO'));
-        out.push(line('  reason', String(a.reason ?? '')));
+        out.push(line('  reason', s(a.reason, '')));
       }
     }
-    if (e.action === 'completeRollback') {
-      out.push(line('  reverted from', String(e.detail['revertedFrom'] ?? 'unknown')));
-      out.push(line('  reverted to', String(e.detail['revertedTo'] ?? 'unknown')));
-      out.push(line('  via code release', String(e.detail['viaCodeRelease'] ?? 'unknown')));
+    if (e.action === 'abandon') {
+      out.push(line('  reason', s(e.detail['reason'], 'no reason given')));
+      out.push('  (nothing had been activated, so nothing required reverting)');
+    }
+    if (e.action === 'beginRollback') {
+      out.push(line('  reverting from', s(e.detail['from'])));
+      out.push(line('  rollback target', s(e.detail['target'])));
+    }
+    if (e.action === 'confirmRollback' || e.action === 'failRollback') {
+      out.push(line('  rollback target', s(e.detail['rollbackTarget'])));
+      out.push(line('  target read back', s(e.detail['observedModel'])));
+      out.push(line('  confirmed', e.detail['confirmed'] === true ? 'YES, by read-back' : 'NO'));
+      if (e.action === 'confirmRollback') out.push(line('  via code release', s(e.detail['viaCodeRelease'])));
+      if (e.action === 'failRollback') {
+        out.push('  *** The rollback write did not take effect. THE SYSTEM IS NOT KNOWN TO BE');
+        out.push('      SAFE. Intervene directly at the activation target.');
+      }
     }
     out.push('');
   }
@@ -109,9 +142,12 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
   out.push('ATTESTATION');
   out.push('-'.repeat(72));
   out.push('Every line above is derived from the append-only ledger. The report has no other');
-  out.push('source, so it cannot assert a transition that was not recorded. Sequence numbers');
-  out.push('and from/to states are chain-checked on read; a spliced or edited ledger fails to');
-  out.push('load rather than rendering a plausible history.');
+  out.push('source, so it cannot assert a transition that was not recorded. On read, every');
+  out.push('record is checked three ways: sequence continuity, from/to chain continuity, and');
+  out.push('whether the (action, from, to) triple is one the state machine could produce. A');
+  out.push('spliced or hand-edited ledger fails to load rather than rendering a plausible');
+  out.push('history. ACTIVATED and ROLLED_BACK are recorded only after the activation target');
+  out.push('positively read back the expected model.');
 
   return out.join('\n');
 }

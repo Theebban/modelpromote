@@ -1,16 +1,31 @@
 {
   "name": "modelshift",
   "version": "0.1.0",
-  "description": "A governed change-control lifecycle for swapping the AI model in a production application: evaluate, accept against a declared policy, approve, activate, verify from telemetry, roll back, and leave an audit record.",
+  "description": "A vendor-neutral change-control layer for swapping the AI model in a production application: evaluate, accept against a locked policy, approve, activate with read-back confirmation, verify from telemetry, roll back, and keep one portable migration record.",
   "type": "module",
   "license": "UNLICENSED",
   "private": true,
   "engines": {
     "node": ">=22.6.0"
   },
-  "bin": {
-    "modelshift": "./src/cli/index.ts"
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
+  "bin": {
+    "modelshift": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-RECOMMENDATION.md"
+  ],
   "keywords": [
     "llm",
     "model-migration",
@@ -26,8 +41,12 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "demo": "node --experimental-strip-types examples/basic-migration/run-demo.ts",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "mutate": "bash scripts/mutate.sh",
+    "smoke:package": "bash scripts/package-smoke.sh",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

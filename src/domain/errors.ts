@@ -71,6 +71,106 @@ export class NoMigrationError extends Error {
   }
 }
 
+/** An externally supplied identifier could forge or distort the audit report. */
+export class UnsafeIdentifierError extends Error {
+  readonly field: string;
+  constructor(field: string, reason: string) {
+    super(
+      `Rejected the value supplied for "${field}" because ${reason}.\n` +
+        '  Identifiers appear verbatim in the audit report, so they must not be able to\n' +
+        '  forge a line of it. Use printable characters with no leading or trailing spaces.',
+    );
+    this.name = 'UnsafeIdentifierError';
+    this.field = field;
+  }
+}
+
+/** The activation target did not read back the model that was written to it. */
+export class ActivationNotConfirmedError extends Error {
+  readonly requested: string;
+  readonly observed: string;
+  constructor(requested: string, observed: string, target: string) {
+    super(
+      `Activation was NOT confirmed. The target did not read back the candidate.\n` +
+        `  requested : ${requested}\n` +
+        `  observed  : ${observed}\n` +
+        `  target    : ${target}\n` +
+        '  The migration is recorded as ACTIVATION_FAILED, not ACTIVATED. Nothing is\n' +
+        '  confirmed live. Roll back, then investigate the activation target.',
+    );
+    this.name = 'ActivationNotConfirmedError';
+    this.requested = requested;
+    this.observed = observed;
+  }
+}
+
+/** The rollback write did not take effect. The system is NOT known to be safe. */
+export class RollbackNotConfirmedError extends Error {
+  readonly requested: string;
+  readonly observed: string;
+  constructor(requested: string, observed: string, target: string) {
+    super(
+      `Rollback was NOT confirmed. The target did not read back the rollback model.\n` +
+        `  rollback target : ${requested}\n` +
+        `  still observed  : ${observed}\n` +
+        `  activation target: ${target}\n` +
+        '  The migration is recorded as ROLLBACK_FAILED. THE SYSTEM IS NOT KNOWN TO BE SAFE.\n' +
+        '  Intervene directly at the activation target.',
+    );
+    this.name = 'RollbackNotConfirmedError';
+    this.requested = requested;
+    this.observed = observed;
+  }
+}
+
+/** The acceptance policy changed after the evidence it governs was produced. */
+export class StalePolicyEvidenceError extends Error {
+  readonly governingHash: string;
+  readonly currentHash: string;
+  constructor(governingHash: string, currentHash: string, step: string) {
+    super(
+      `Cannot ${step}: the acceptance policy changed after the evidence was produced.\n` +
+        `  policy in force when evaluated : ${governingHash}\n` +
+        `  policy in force now            : ${currentHash}\n` +
+        '  The verdict on record was earned under different rules, so it no longer applies.\n' +
+        '  Re-run "modelshift evaluate" to produce evidence under the current policy.',
+    );
+    this.name = 'StalePolicyEvidenceError';
+    this.governingHash = governingHash;
+    this.currentHash = currentHash;
+  }
+}
+
+/** An evaluator returned something that cannot be trusted to drive an acceptance verdict. */
+export class InvalidEvidenceError extends Error {
+  readonly problems: readonly string[];
+  constructor(modelId: string, problems: readonly string[]) {
+    super(
+      `The evaluator returned evidence that cannot support a verdict for "${modelId}":\n` +
+        problems.map((p) => `  - ${p}`).join('\n') +
+        '\n  Evidence crossing the Evaluator boundary is validated before it can produce\n' +
+        '  ACCEPTED, because an acceptance is only as good as the measurement behind it.',
+    );
+    this.name = 'InvalidEvidenceError';
+    this.problems = problems;
+  }
+}
+
+/** No verification inputs were supplied for a non-demo integration. */
+export class NoVerificationPlanError extends Error {
+  constructor(source: string) {
+    super(
+      `No verification inputs are available, and ports came from ${source}.\n` +
+        '  modelshift will not send its built-in demo fixtures through your adapters.\n' +
+        '  Supply one of:\n' +
+        '    - a "verificationInputs" array in modelshift.config.json, or\n' +
+        '    - a "verificationPlan()" export from modelshift.ports.ts returning string[].\n' +
+        '  Verification traffic reaches your real system, so it must be traffic you chose.',
+    );
+    this.name = 'NoVerificationPlanError';
+  }
+}
+
 export class VerificationBoundsError extends Error {
   constructor(reason: string) {
     super(`Invalid verification bounds: ${reason}. No model call and no telemetry write occurred.`);

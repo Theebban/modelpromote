@@ -68,4 +68,18 @@ export interface Ports {
   readonly telemetry: TelemetrySource;
   /** Injected so audit output can be made deterministic in tests. */
   readonly now: () => string;
+  /**
+   * The traffic to issue during post-activation verification.
+   *
+   * Verification traffic reaches your REAL system through your REAL adapters, so it must be
+   * traffic you chose. modelshift will never fall back to its own demo fixtures for a custom
+   * integration: if neither this nor `verificationInputs` in config is present, verification
+   * fails closed with an actionable error.
+   */
+  readonly verificationPlan?: () => Promise<readonly string[]> | readonly string[];
+  /**
+   * True only for the built-in demonstration wiring. The bundled demo fixtures are usable
+   * as verification traffic when, and only when, this is set.
+   */
+  readonly isDemo?: boolean;
 }

@@ -14,6 +14,12 @@ bash scripts/mutate.sh
 
 ## Current results
 
+19 mutations, all killed. The table below lists the originals; the corrections from the
+independent review add mutations for read-back gating on activation and rollback, two-phase
+ordering, semantic ledger validation, policy locking, fixture leakage, evidence validation,
+identifier rejection, report escaping and the abandon boundary. `scripts/mutate.sh` is the
+authoritative list.
+
 | Mutation | Guarantee removed | Result |
 |---|---|---|
 | `runBoundedVerification` pre-slices its input to `maxRequests` | The in-loop ceiling guard becomes unreachable | **killed**, 2 tests |

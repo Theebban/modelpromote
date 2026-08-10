@@ -1,20 +1,18 @@
 # modelshift
 
-**Change control for the AI model in your production application.**
+**A vendor-neutral change-control layer for swapping the AI model in a production application.**
 
-You already have an application calling a model. You want to move it to a different model.
-The hard part was never the API call. It is knowing that the new model was actually
-measured, that someone authorised the change, that the switch really took effect, and that
-you can prove all three afterwards.
-
-modelshift makes a model change a **governed operation with a state machine**, not a config
-edit that happened to work out.
+You already have evaluation, an activation mechanism and telemetry. They are probably three
+different products, and none of them holds the whole story of a model change. modelshift is a
+small, readable layer that connects them, enforces the order they have to happen in, and
+leaves behind **one portable record** of what was measured, who authorised it, what actually
+served traffic afterwards, and how it ended.
 
 ```
 $ modelshift activate --actor sam
 
 ERROR: IllegalTransitionError
-Cannot "activate" from state ACCEPTED.
+Cannot "beginActivation" from state ACCEPTED.
   required state : APPROVED
   current state  : ACCEPTED
 ```
@@ -23,118 +21,127 @@ Cannot "activate" from state ACCEPTED.
 
 ## 1. What problem does this solve?
 
-Swapping a model touches four separate concerns, and the tools you already use each own
-one of them:
+Governed AI rollout is **not** an unsolved problem. Feature-flag platforms ship model
+configuration, evaluations, approvals, gradual rollout and change history. Progressive-delivery
+controllers ship canary analysis and automated rollback. Evaluation frameworks are mature.
+modelshift does not claim to have invented any of that.
 
-| Concern | Handled well by |
-|---|---|
-| Is the candidate any good? | Promptfoo, DeepEval, your own evals |
-| What is serving right now? | LiteLLM, your config store, a feature flag |
-| What happened afterwards? | Langfuse, OpenTelemetry, your logs |
-| **Was this change earned, and can you prove it?** | **nothing, usually** |
+What it addresses is narrower and more boring: **most teams already own those capabilities, in
+pieces, from different vendors, and the record of a model change is spread across all of them.**
+Your eval scores live in one tool, the flag flip in another, the traces in a third, and the
+approval in a chat thread. Reconstructing "why did the model change on the 14th, and who said
+it was safe" means joining four systems by hand, and one of them has a 30-day retention window.
 
-That last row is the gap. An evaluation produces a score and stops. A flag lets anyone flip
-the model whether or not the score was ever looked at. Observability tells you what
-happened after the fact. Nothing connects the evidence to the authority to act on it.
+modelshift is the thin layer that:
 
-**modelshift owns the seam.** It makes "you may activate" a derived, policy-checked,
-recorded fact instead of a belief someone holds, and it emits the record that a code
-reviewer, an incident responder or an auditor will ask for.
+- **enforces the order**, so activation cannot happen before evidence and approval exist;
+- **reads back**, so ACTIVATED means the target confirmed the change, not that a write returned;
+- **produces one file** that reconstructs the whole migration without any of those vendors.
+
+If you are happy inside a single vendor's ecosystem and expect to stay there, that vendor's
+built-in governance is likely a better fit than this. modelshift is for the common case where
+the pieces are heterogeneous, or where the record needs to outlive the tools.
 
 ## 2. When should I use it?
 
-Use it when a model change in your system is a **deliberate event** that somebody should be
-able to reconstruct later: a production application, a regulated or audited environment, a
-team where the person who evaluates is not always the person who deploys, or any system
-where "who changed the model and why" is a question you would rather be able to answer.
+- Your evaluation, activation and telemetry come from **different tools**, or you expect to
+  change one of them.
+- You need a migration record that is **portable and reconstructable** without a vendor
+  account, for review, incident analysis or an audit.
+- The person who evaluates is not always the person who activates.
+- You want the gate **in front of** your flag system, not instead of it.
 
-**Do not use it** to route traffic, gateway providers, run large eval suites, or serve a
-dashboard. It integrates with the tools that do those things.
+**Do not use it** to route traffic, gateway providers, run evaluations, or serve a dashboard.
+It integrates with the tools that do those things.
 
 ## 3. Five-minute demonstration
 
-Requires **Node 22.6 or newer**. No API key, no `.env`, no account, no network.
-The demo runs entirely on local deterministic stand-in models.
+Requires **Node 22.6 or newer**. No API key, no `.env`, no account, no network. Tests and demo
+run from a bare clone with **no install**.
 
 ```bash
 git clone <this repo> && cd modelshift
 mkdir /tmp/demo
-
 alias ms="node --experimental-strip-types src/cli/index.ts --root /tmp/demo"
 
 ms init
 ms register demo-candidate
-ms activate --actor you      # refused: nothing has been evaluated or approved
-ms evaluate                  # measures both models, then applies your policy
+ms activate --actor you      # refused: nothing evaluated or approved
+ms evaluate                  # measures both models, applies the locked policy
 ms approve --actor you
-ms activate --actor you
+ms activate --actor you      # confirmed by reading the target back
 ms verify                    # bounded traffic, then asserts from telemetry
 ms report
 ```
 
-Try breaking it. Every one of these is refused, not warned about:
+Then try to break it. Each of these is refused, not warned about:
 
 ```bash
-ms approve --actor you       # before evaluate
-ms activate --actor you      # before approve
-echo "garbage" >> /tmp/demo/.modelshift/ledger.jsonl && ms status
+ms approve --actor you                                    # before evaluate
+ms activate --actor you                                   # before approve
+ms approve --actor "you\n     approved by   compliance"   # forged audit line
+echo '}}}' >> /tmp/demo/.modelshift/migrations/0001.jsonl && ms status
 ```
 
 ## 4. The migration lifecycle
 
 ```
-                register        evaluate         policy          approve
-   (nothing)  ──────────▶ REGISTERED ─────▶ EVALUATED ─────▶ ACCEPTED ─────▶ APPROVED
-                                                  │                              │
-                                                  │ policy fails                 │ activate
-                                                  ▼                              ▼
-                                              REJECTED                      ACTIVATED
-                                                                                 │
-                                                          telemetry confirms ────┼──── telemetry does not
-                                                                    ▼            │            ▼
-                                                                VERIFIED         │    FAILED_VERIFICATION
-                                                                    │            │            │
-                                                              close │            │            │
-                                                                    ▼            │            │
-                                                                 STABLE          │            │
-                                                                    │            │            │
-                                                                    └────────────┴────────────┘
-                                                                                 │  rollback
-                                                                                 ▼
-                                                                          ROLLING_BACK ──▶ ROLLED_BACK
+              register        evaluate        policy         approve
+  (nothing) ───────────▶ REGISTERED ─────▶ EVALUATED ────▶ ACCEPTED ─────▶ APPROVED
+                              │                 │              │                │
+                              │                 │ fails        │ policy         │ activate
+                              │                 ▼              │ changed        ▼
+                              │            REJECTED            ▼           ACTIVATING
+                              │                 │        EVIDENCE_STALE         │
+                              │                 └──────┬───────┘        read-back│
+                              │        re-evaluate     │                         │
+                              │◀───────────────────────┘             ┌───────────┴──────────┐
+                              │                                      ▼                      ▼
+                              │  abandon                        ACTIVATED           ACTIVATION_FAILED
+                              ▼                                      │                      │
+                         ABANDONED                    telemetry ─────┼───── no               │
+                                                            ▼        │       ▼               │
+                                                        VERIFIED     │  FAILED_VERIFICATION  │
+                                                            │        │       │               │
+                                                      close │        │       │               │
+                                                            ▼        │       │               │
+                                                         STABLE ─────┴───────┴───────────────┘
+                                                                          rollback
+                                                                             ▼
+                                                     ROLLING_BACK ──▶ ROLLED_BACK
+                                                             └──────▶ ROLLBACK_FAILED
 ```
 
 **Fail closed on promotion, fail open on rollback.** Every step toward serving traffic is an
 allow-list entry: not listed means refused. Rollback is reachable from every state where
-something could be live, including `STABLE`, because blocking a promotion costs five
-minutes and blocking a rollback costs an outage.
+something could be live, including `STABLE`, and it still works when the ledger is unreadable.
 
-Run `modelshift states` to print the full table.
+Run `modelshift states` for the full table.
 
 ## 5. CLI
 
 | Command | What it does |
 |---|---|
-| `init` | Write `modelshift.config.json` and an empty ledger |
+| `init` | Write `modelshift.config.json` and the migration store |
 | `register <candidate>` | Begin a migration |
-| `evaluate` | Measure baseline vs candidate, then apply the acceptance policy |
-| `status` | Show current state. Read only, never writes |
+| `evaluate` | Measure baseline vs candidate, then apply the locked policy |
+| `status` | Current state. Read only, never writes |
 | `approve --actor <name>` | Human authorisation. Legal only from `ACCEPTED` |
-| `activate --actor <name>` | Switch the serving model. Legal only from `APPROVED` |
+| `activate --actor <name>` | Switch the serving model, confirmed by read-back |
 | `verify` | Bounded traffic, then assert the serving model from telemetry |
 | `close --actor <name>` | Close the migration. State becomes `STABLE` |
+| `abandon --actor <name>` | Give up on a candidate, before anything is activated |
 | `rollback --actor <name>` | Revert to the configured rollback model |
 | `report` | The full audit record |
+| `history` | Every migration in this project |
 | `states` | Print the transition table |
 
-Every command takes `--root <dir>`. An approval or activation without `--actor` is refused:
-an approval with no named actor is not an approval.
+`--root <dir>`, `--migration <id>`, `--json` where supported. An approval or activation
+without `--actor` is refused: an approval with no named actor is not an approval.
 
-The same operations are available as a library; the CLI is a thin shell over `src/engine.ts`.
+The same operations are a library: `import { register, evaluate, approve, activate } from 'modelshift'`.
 
 ## 6. Configuration
-
-`modelshift.config.json`, written by `init`:
 
 ```json
 {
@@ -146,62 +153,65 @@ The same operations are available as a library; the CLI is a thin shell over `sr
     "requiredCases": ["case-critical-negation"],
     "allowCriticalFailures": false
   },
-  "verification": {
-    "maxRequests": 5,
-    "minObservations": 3
-  }
+  "verification": { "maxRequests": 5, "minObservations": 3 },
+  "verificationInputs": ["optional: the traffic to issue during verification"]
 }
 ```
 
-Every field is either something the framework must know about your system, or a rule it
-will enforce **against you** later. There are no tuning knobs and no provider settings:
-those belong to adapters.
-
-The acceptance policy is hashed when the verdict is recorded and hashed again at approval.
-**Edit the policy after seeing the score and the report says so**, in the report, at the
-approval step.
+**Verification traffic is never invented for you.** For a custom integration you must supply
+`verificationInputs`, or export `verificationPlan()` from your ports file. modelshift will not
+push its own demo fixtures through your adapters, because that traffic reaches your real
+system. With neither present, verification **fails closed** with an actionable error.
 
 ## 7. State-machine semantics
 
-- **The ledger is the state.** `.modelshift/ledger.jsonl` is append-only, and current state
-  is a fold over it. There is no separate state field, which is what makes it structurally
-  impossible for a report to describe a transition that was never recorded.
-- **Reads are strict.** Sequence numbers must be contiguous and each event's `from` must
-  match the previous event's `to`. An edited or spliced ledger **fails to load** rather than
-  rendering a plausible history.
-- **A corrupt ledger never degrades into a default.** It does not read as `REGISTERED`.
-  Forward motion stops entirely. **Rollback still works**: `modelshift rollback` detects the
-  unreadable ledger and falls back to an emergency path that reverts to the model declared in
-  configuration, because you do not need a readable history to know what you declared safe.
-  That action is written to `.modelshift/recovery.jsonl`, never appended to the ledger that
-  just failed its integrity check, and the ledger is left untouched for investigation.
-- **Machine verdict and human permission are different events.** `ACCEPTED` means the
-  evidence satisfied the declared rules. `APPROVED` means a named person authorised the
-  change. Keeping them apart is the point of the framework.
+- **The ledger is the state.** `.modelshift/migrations/NNNN.jsonl` is append-only, and current
+  state is a fold over it. No separate state field can drift from the record.
+- **Reads are strict in three independent ways**: sequence continuity, `from`/`to` chain
+  continuity, and **semantic legality**, meaning every `(action, from, to)` triple must be one
+  the transition table could have produced. The third matters because the first two are
+  satisfiable by a forgery: editing one field of a valid record can invent a migration that
+  skipped evaluation entirely.
+- **A corrupt ledger never degrades into a default.** Forward motion stops; `rollback` detects
+  it and falls back to an emergency path that takes its target from configuration, records to a
+  separate `recovery.jsonl`, and leaves the corrupt file untouched for investigation.
+- **Machine verdict and human permission are different events.** `ACCEPTED` means the evidence
+  satisfied the locked rules; `APPROVED` means a named person authorised the change.
+- **The policy is locked before the evidence exists.** Change it afterwards and the verdict is
+  void: the migration moves to `EVIDENCE_STALE`, which has no path to `APPROVED`. The only way
+  forward is a fresh evaluation under the current policy, and the invalidation is recorded.
+- **Activation and rollback are two-phase.** The intent is recorded *before* the external write,
+  so an interruption leaves `ACTIVATING` (something may be live, nothing confirmed) rather than
+  a state that claims safety. The outcome is recorded from what the target **read back**.
 
 ## 8. Adapters
 
-modelshift owns the lifecycle, the policy decision and the record. It owns nothing else.
-Four small interfaces (`src/ports/index.ts`):
+Four small interfaces (`src/ports/index.ts`). Implement them and the lifecycle governs your
+system unchanged.
 
-| Port | You point it at | Contract |
+| Port | Point it at | Contract |
 |---|---|---|
-| `ModelAdapter` | your provider SDK, LiteLLM, anything | `complete(input) => string` |
+| `ModelAdapter` | your provider SDK, a gateway, anything | `complete(input) => string` |
 | `Evaluator` | Promptfoo, DeepEval, a judge, your own metric | `evaluate(adapter, cases) => result` |
 | `ActivationTarget` | env var, config service, feature flag, DB row | `read()` and `write(model)` |
-| `TelemetrySource` | your logs, OpenTelemetry, Langfuse | `observations(since) => [{requestId, servedBy}]` |
+| `TelemetrySource` | your logs, OpenTelemetry, a tracing vendor | `observations(since) => [{requestId, servedBy}]` |
 
-`ActivationTarget.read()` is not decoration. Activation is not "we wrote the config", it is
-"the target reports the new value back". A write that silently no-ops is exactly what it
-catches.
+`read()` is not decoration. Activation is not "we wrote the config", it is "the target reports
+the new value back". A write that silently no-ops is exactly what it catches.
 
-To govern your own system, drop a `modelshift.ports.ts` beside your config exporting
-`createPorts(root)`. The CLI picks it up automatically. Nothing else changes.
+Drop a `modelshift.ports.ts` (or `.js` when installed) beside your config exporting
+`createPorts(root)`. The CLI picks it up automatically.
+
+**Evidence crossing the `Evaluator` boundary is validated** before it can produce an
+acceptance: the result must describe the adapter that was evaluated, the score must be finite
+and in range, counts must be coherent, and duplicate or unsubmitted case ids are rejected. This
+is not an evaluation framework; it makes no judgement about whether a score is *good*, only
+about whether it is *coherent*.
 
 ## 9. Safety invariants
 
 Each is enforced in code and covered by a test that **fails when the implementation is
-deliberately broken** (see `docs/mutation-testing.md`):
+deliberately broken** (`docs/mutation-testing.md`, 19 mutations, all killed).
 
 1. An unevaluated candidate cannot be approved.
 2. A candidate that failed the policy cannot be approved.
@@ -210,56 +220,59 @@ deliberately broken** (see `docs/mutation-testing.md`):
 5. Verification cannot exceed its configured ceiling.
 6. An empty telemetry set never confirms activation.
 7. A mismatched serving model cannot produce `VERIFIED`.
-8. Rollback targets the declared safe model.
+8. Rollback targets the declared safe model, and `ROLLED_BACK` requires read-back.
 9. Audit records cannot claim a transition that did not occur.
 10. Re-running `status` does not mutate state.
-
-Two are worth spelling out.
-
-**The verification ceiling is enforced by the loop.** The full input is iterated and the
-bound is tested before every request. Slicing the input to the ceiling first looks
-equivalent and is not: it makes the guard unreachable and moves the guarantee into the
-caller, where no test can reach it.
-
-**An empty telemetry set is not confirmation.** A broken telemetry pipeline and a model that
-served nothing produce the same empty set, and the safe reading of both is "unconfirmed".
+11. **`ACTIVATED` requires a positive read-back from the activation target.**
+12. **A policy change invalidates the evidence it governed.**
+13. **A hand-edited ledger cannot invent a legal-looking transition.**
+14. **An identifier cannot forge a line of the audit report.**
 
 ## 10. Limitations
 
-This is **v0.1.0** and deliberately narrow.
+**v0.1.0.**
 
-- **Single migration per project root.** No concurrent or per-tenant migrations yet.
-- **No partial rollout.** Activation is all-or-nothing. Percentage rollouts and per-segment
-  targeting are not implemented; today a flag platform does that better.
-- **The bundled evaluator is exact-match**, which is intentionally the weakest useful
-  metric. Real evaluation belongs behind the `Evaluator` port.
+- **One active migration per project root.** History is retained and a new migration can begin
+  once the previous one reaches `STABLE`, `ROLLED_BACK` or `ABANDONED`. No concurrent or
+  per-tenant migrations.
+- **No partial rollout.** Activation is all-or-nothing. Percentage and per-segment rollout are
+  not implemented; a flag platform does that better, and modelshift is meant to sit in front of
+  one rather than replace it.
+- **The bundled evaluator is exact-match**, deliberately the weakest useful metric.
 - **The bundled adapters are local stand-ins.** No provider integration ships in v0.
-- **The ledger is a local file.** No shared or remote backend, so it governs one operator or
-  one CI job, not a distributed team.
-- **No authentication.** `--actor` is an assertion, not an identity. It records who said
-  they did it; it does not prove it.
-- **Node 22.6+**, because the source runs through native type stripping with no build step.
+- **The ledger is a local file** and is tamper-**evident**, not tamper-**resistant**. Anyone who
+  can write it can rewrite it consistently. A hash-chained or signed ledger is on the roadmap.
+- **No authentication.** `--actor` is an assertion, not an identity.
+- **Node 22.6+** for the source workflow. The published package is plain JavaScript.
 
 ## 11. Roadmap
 
-Integration first, features second. The point is to be the governance layer over tools you
-already run, not to reimplement them.
+Integration first. The point is to be the governance layer over tools you already run.
 
 - Adapters for Promptfoo and DeepEval result formats
-- OpenTelemetry and Langfuse telemetry sources
-- LiteLLM and feature-flag activation targets
-- Progressive activation (percentage, per-segment) with the same gates
-- A signed or append-only-verified ledger for tamper evidence
+- OpenTelemetry and tracing-vendor telemetry sources
+- Gateway and feature-flag activation targets
+- Progressive activation under the same gates
+- A hash-chained or signed ledger for tamper resistance
 - Machine-readable report output for CI and evidence pipelines
+
+## Install and build
+
+```bash
+npm install        # devDependencies only: TypeScript and ESLint
+npm run build      # emit plain JavaScript to dist/
+npm run check      # typecheck, lint, tests
+npm run mutate     # prove each safety gate fails when broken
+npm run smoke:package   # build, pack, install the tarball, run the installed CLI
+```
 
 ## License
 
-**Not yet chosen.** This repository is unpublished and currently carries no open-source
-grant. Apache-2.0 is the recommendation, with the reasoning in
-[LICENSE-RECOMMENDATION.md](LICENSE-RECOMMENDATION.md); the decision belongs to the project
-owner and has not been made. Until it is, treat this as all rights reserved.
+**Not yet chosen.** This repository is unpublished and carries no open-source grant.
+Apache-2.0 is the recommendation, with reasoning in
+[LICENSE-RECOMMENDATION.md](LICENSE-RECOMMENDATION.md). Until the owner decides, treat this as
+all rights reserved.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The invariants in section 9 are the contract: a
-change that weakens one needs a very good argument and a replacement test.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The invariants in section 9 are the contract.

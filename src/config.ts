@@ -38,6 +38,14 @@ export interface ModelshiftConfig {
   readonly rollbackModel: ModelId;
   readonly acceptance: AcceptancePolicy;
   readonly verification: VerificationBounds;
+  /**
+   * Traffic to issue during post-activation verification.
+   *
+   * Optional here, but SOMETHING must supply it for a custom integration: either this, or a
+   * `verificationPlan()` export from `modelshift.ports.ts`. modelshift never falls back to
+   * its own demo fixtures for adapters it did not write.
+   */
+  readonly verificationInputs?: readonly string[];
 }
 
 export const DEFAULT_CONFIG: ModelshiftConfig = Object.freeze({
@@ -101,6 +109,16 @@ export function parseConfig(raw: unknown): ModelshiftConfig {
     throw new ConfigError('"acceptance.requiredCases" must be an array of strings');
   }
 
+  const inputsRaw = o['verificationInputs'];
+  if (inputsRaw !== undefined) {
+    if (!Array.isArray(inputsRaw) || inputsRaw.some((i) => typeof i !== 'string')) {
+      throw new ConfigError('"verificationInputs" must be an array of strings');
+    }
+    if (inputsRaw.length === 0) {
+      throw new ConfigError('"verificationInputs" is present but empty. Remove it, or supply real traffic');
+    }
+  }
+
   return {
     baselineModel: asModelId(req(o, 'baselineModel'), 'baselineModel'),
     rollbackModel: asModelId(req(o, 'rollbackModel'), 'rollbackModel'),
@@ -114,6 +132,7 @@ export function parseConfig(raw: unknown): ModelshiftConfig {
       maxRequests: asPositiveInt(req(v, 'maxRequests'), 'verification.maxRequests'),
       minObservations: asPositiveInt(req(v, 'minObservations'), 'verification.minObservations'),
     },
+    ...(inputsRaw === undefined ? {} : { verificationInputs: inputsRaw as readonly string[] }),
   };
 }
 
@@ -142,9 +161,16 @@ export function writeConfig(root: string, config: ModelshiftConfig): void {
 /**
  * A stable fingerprint of the acceptance policy.
  *
- * Recorded at accept time and again at approve time. If the policy is edited between the
- * verdict and the approval, the hashes differ and the audit report says so. Moving the bar
- * after seeing the score is the failure this exists to make visible.
+ * POLICY LOCKING. The governing hash is captured at `register`, and re-captured at each
+ * `evaluate`, which is the moment the evidence is produced. Both `decide` and `approve`
+ * then REFUSE if the current policy no longer matches the one the evidence was produced
+ * under.
+ *
+ * Warning and continuing was the original behaviour and it was wrong: it let an operator
+ * see a score, relax the rule that the score failed, and proceed on evidence earned under
+ * rules that no longer exist. A change-control tool that reports the violation but permits
+ * it is not change control. Changing the policy now invalidates the evidence and requires
+ * a fresh evaluation.
  */
 export function policyHash(policy: AcceptancePolicy): string {
   const canonical = JSON.stringify({

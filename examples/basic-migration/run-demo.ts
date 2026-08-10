@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { DEFAULT_CONFIG, writeConfig, loadConfig } from '../../src/config.ts';
-import { initLedger } from '../../src/store/ledger.ts';
+import { initStore } from '../../src/store/ledger.ts';
 import { demoPorts } from '../../src/adapters/local/demoPorts.ts';
 import { DEMO_CASES, DEMO_VERIFICATION_INPUTS } from '../../src/adapters/local/fixtures.ts';
 import { activate, approve, decide, evaluate, register, stabilise, status, verify } from '../../src/engine.ts';
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'modelshift-demo-'));
   try {
     writeConfig(root, DEFAULT_CONFIG);
-    initLedger(root);
+    initStore(root);
     const config = loadConfig(root);
     // A fixed clock so this transcript is byte-identical every run.
     let tick = 0;
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
     })();
 
     heading('3. EVALUATE, then apply the declared policy');
-    const { evaluation } = await evaluate(root, DEMO_CASES, ports);
+    const { evaluation } = await evaluate(root, DEMO_CASES, config, ports);
     console.log(`  baseline  ${evaluation.baseline.modelId}  ${evaluation.baseline.score.toFixed(3)}`);
     console.log(`  candidate ${evaluation.candidate.modelId}  ${evaluation.candidate.score.toFixed(3)}`);
     console.log(`  delta     ${evaluation.delta >= 0 ? '+' : ''}${evaluation.delta.toFixed(3)}`);
@@ -80,9 +80,11 @@ async function main(): Promise<void> {
     approve(root, 'sam', config, clock);
     console.log(`  state: ${status(root).state}`);
 
-    heading('5. ACTIVATE, and read the target back');
-    const { serving } = await activate(root, 'sam', ports);
-    console.log(`  the activation target now reports: ${serving}`);
+    heading('5. ACTIVATE, confirmed by reading the target back');
+    const act = await activate(root, 'sam', ports);
+    console.log(`  requested        : ${act.requested}`);
+    console.log(`  target read back : ${act.observed}`);
+    console.log(`  confirmed        : ${act.confirmed ? 'YES, by read-back' : 'NO'}`);
 
     heading('6. VERIFY under a hard ceiling, then assert from telemetry');
     const { run, assertion } = await verify(root, DEMO_VERIFICATION_INPUTS, config, ports);
@@ -99,7 +101,7 @@ async function main(): Promise<void> {
 
     heading('8. THE AUDIT RECORD');
     const v = status(root);
-    console.log(renderReport(v.events, v.state));
+    console.log(renderReport(v.events, v.state, v.id));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -9,6 +9,40 @@ version once 1.0.0 is out, because both are things users build process around.
 
 ## [Unreleased]
 
+### Corrected after independent release review
+An independent review of the 0.1.0 build reproduced several defects against the actual
+repository. All are fixed; the review itself is preserved in the project history rather than
+edited out.
+
+- **`ACTIVATED` now requires a positive read-back.** An activation target whose `write()` did
+  nothing produced `serving = baseline, state = ACTIVATED`. Activation is now two-phase, with
+  the intent recorded BEFORE the external write, and the outcome recorded from what the target
+  reported back. New states `ACTIVATING` and `ACTIVATION_FAILED`.
+- **`ROLLED_BACK` now requires a positive read-back**, with `ROLLING_BACK` and
+  `ROLLBACK_FAILED`. Emergency rollback is gated the same way and no longer reports success
+  when the target still serves the candidate.
+- **Ledger reads validate SEMANTIC legality**, not only structure and chain continuity.
+  Editing one field of a valid record could previously invent a migration that skipped
+  evaluation and approval.
+- **A policy change now invalidates the evidence it governed** instead of warning. New state
+  `EVIDENCE_STALE`, reached by an explicit recorded `invalidateEvidence` transition, with no
+  path to `APPROVED`.
+- **Verification inputs must be declared for a custom integration.** The bundled demo fixtures
+  can no longer be issued through adapters modelshift did not write. Fails closed.
+- **Evidence crossing the `Evaluator` boundary is validated** for model identity, score range,
+  count coherence, duplicate case ids and unsubmitted case ids.
+- **Identifiers are rejected, and adapter-supplied strings escaped**, so an actor or model name
+  cannot forge a line of the audit report.
+- **Many migrations per project**, retained as `.modelshift/migrations/NNNN.jsonl` with a new
+  `history` command. A new migration may begin once the previous reaches a terminal state.
+- **`abandon`**, so a rejected candidate no longer wedges the project. Legal only before
+  anything is activated. Found by walking the CLI as a new user.
+- **A real build.** `bin` pointed at a `.ts` file and could not execute when installed. The
+  package now ships built JavaScript with a public library entry point, and a package smoke
+  test installs the tarball and runs the installed binary.
+- Public positioning corrected: modelshift does not claim to have invented governed AI
+  rollout. See the README.
+
 ## [0.1.0] - unreleased, local only
 
 First working end-to-end lifecycle. Not published, no remote, no package registry entry.
