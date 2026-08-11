@@ -11,7 +11,26 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+
+# RESTORE FIRST, CLEAN UP SECOND, AND DO BOTH ON AN INTERRUPT.
+#
+# A mutation is a deliberate break in a tracked source file. If the script dies while one is
+# applied, whether from Ctrl-C, a timeout or a killed parent, that break stays in the working
+# tree and the next run reports BASELINE IS RED for a reason that has nothing to do with the
+# code. That happened during this cycle, and the old EXIT trap made it worse by deleting the
+# work directory, and the backup inside it, before anything could be restored.
+CURRENT_FILE=""
+restore_current () {
+  if [ -n "$CURRENT_FILE" ] && [ -f "$WORK/backup" ]; then
+    cp "$WORK/backup" "$CURRENT_FILE"
+    echo
+    echo "INTERRUPTED: restored $CURRENT_FILE from backup. The working tree is clean."
+    CURRENT_FILE=""
+  fi
+}
+trap 'restore_current; rm -rf "$WORK"' EXIT
+trap 'restore_current; rm -rf "$WORK"; exit 130' INT TERM
+
 killed=0
 survived=0
 invalid=0
@@ -31,6 +50,7 @@ baseline () {
 mutate () {
   local name="$1" file="$2" search="$3" replace="$4"
   cp "$file" "$WORK/backup"
+  CURRENT_FILE="$file"
 
   python3 - "$file" "$search" "$replace" <<'PY'
 import sys, pathlib
@@ -43,13 +63,14 @@ if new == t:
 p.write_text(new)
 PY
   case $? in
-    3) skipped=$((skipped + 1)); echo "SKIP     $name (target text not found, the source moved)"; return ;;
-    4) invalid=$((invalid + 1)); echo "INVALID  $name (mutation changed no bytes, proves nothing)"; return ;;
+    3) CURRENT_FILE=""; skipped=$((skipped + 1)); echo "SKIP     $name (target text not found, the source moved)"; return ;;
+    4) CURRENT_FILE=""; invalid=$((invalid + 1)); echo "INVALID  $name (mutation changed no bytes, proves nothing)"; return ;;
   esac
 
   npm test > "$WORK/out.log" 2>&1
   local code=$?
   cp "$WORK/backup" "$file"
+  CURRENT_FILE=""
 
   if [ "$code" -ne 0 ]; then
     killed=$((killed + 1))
@@ -326,6 +347,23 @@ mutate "S7 the recorded evidence class overstates the claim" \
   src/verify/index.ts \
   "    evidenceClass: 'temporal-window'," \
   "    evidenceClass: 'per-request-correlation' as TelemetryEvidenceClass,"
+
+# S8  CLI ARGUMENT ORDER, found by walking the README from a clean clone.
+mutate "S8 the command must be the first argument" \
+  src/cli/index.ts \
+  "  const cmdAt = commandIndex(argv);" \
+  "  const cmdAt = argv.length === 0 ? -1 : 0;"
+
+mutate "S8 a flag value can be mistaken for the command" \
+  src/cli/index.ts \
+  "    if (VALUE_FLAGS.has(a)) {
+      i += 1; // skip the flag's value
+      continue;
+    }" \
+  "    if (false) {
+      i += 1; // skip the flag's value
+      continue;
+    }"
 
 echo
 echo "killed: $killed   survived: $survived   invalid: $invalid   skipped: $skipped"

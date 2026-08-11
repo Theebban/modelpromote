@@ -71,6 +71,14 @@ being true. Fields nothing else cross-references remain undetectable. The word "
 was withdrawn from this project for that reason, and it should not come back until a mechanism
 supports it.
 
+There is one more boundary worth naming, because it is easy to assume away: this layer compares
+records to **each other**. A migration holding only its `register` record has no second record
+to disagree with, so a substitution there is internally consistent and loads. The binding takes
+effect from the first record that depends on the identity, which is the first `evaluate`. That
+is not a gap that can be closed by more comparison; closing it needs a signature over the
+record, which is the same future work as the row above. A test asserts the boundary explicitly
+rather than leaving it to be discovered as a surprise.
+
 ### The policy is locked before the evidence exists
 
 The governing policy is hashed at `register` and re-hashed at each `evaluate`, which is the

@@ -14,7 +14,7 @@ bash scripts/mutate.sh
 
 ## Current results
 
-38 mutations, all killed. 0 survived, 0 invalid, 0 skipped.
+40 mutations, all killed. 0 survived, 0 invalid, 0 skipped.
 
 The table below lists the originals. The first independent review added mutations for
 read-back gating on activation and rollback, two-phase ordering, semantic ledger validation,
@@ -34,7 +34,19 @@ projection, registration atomicity and the recorded telemetry evidence class.
 | Ledger chain check disabled | Edited history loads as valid | **killed**, 1 test |
 | Emergency rollback appends to the corrupt ledger | Recovery pollutes the artifact under investigation | **killed**, 1 test |
 
-## Two findings from the second review's runs
+## Three findings from the second review's runs
+
+**An interrupted run left a deliberate break in the working tree.** The suite grew slower when
+the CLI tests began spawning child processes, a run hit a timeout and was killed mid-mutation,
+and the `if (false && ...)` it had just written to `src/store/consistency.ts` stayed there. The
+next run reported `BASELINE IS RED` for a reason that had nothing to do with the code. The
+`trap ... EXIT` made it worse: it deleted the work directory, and the backup inside it, so the
+only remaining recovery was `git checkout`.
+
+The general shape: **a tool that deliberately breaks your source owes you an interrupt path.**
+The harness now records the file it is currently mutating, restores it before removing the work
+directory, and installs the same handler on `INT` and `TERM`.
+
 
 **A skipped mutation reads exactly like a passing one.** Renaming a variable and rewording a
 message moved the text two mutations searched for. Both reported `SKIP`, the run still ended

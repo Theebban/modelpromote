@@ -80,13 +80,20 @@ Then try to break it. Each of these is refused, not warned about:
 ms approve --actor you                                    # before evaluate
 ms activate --actor you                                   # before approve
 ms approve --actor "you\n     approved by   compliance"   # forged audit line
-echo '}}}' >> /tmp/demo/.modelshift/migrations/0001.jsonl && ms status
 
-# Substitute the candidate in the first ledger record, changing no state at all,
-# then ask what the migration is about. It refuses to load.
-sed -i '' '1s/demo-candidate/demo-regression/' /tmp/demo/.modelshift/migrations/0001.jsonl
-ms status
+# Substitute the candidate in the first ledger record, changing no action and no
+# state. The evaluation record still names the real candidate, so the two records
+# disagree and the ledger refuses to load.
+L=/tmp/demo/.modelshift/migrations/0001.jsonl
+sed -i '' '1s/demo-candidate/demo-regression/' "$L" && ms status
+sed -i '' '1s/demo-regression/demo-candidate/' "$L"    # put it back
+
+echo '}}}' >> "$L" && ms status                        # and plain corruption
 ```
+
+That substitution is caught because a *second* record contradicts it. Tamper with a
+migration that has only ever been registered and there is nothing yet to disagree with, so
+it loads. The binding takes effect from the first record that depends on the identity.
 
 ## 4. The migration lifecycle
 
@@ -247,7 +254,7 @@ whether it is *coherent* and *complete*.
 ## 9. Safety invariants
 
 Each is enforced in code and covered by a test that **fails when the implementation is
-deliberately broken** (`docs/mutation-testing.md`, 38 mutations, all killed).
+deliberately broken** (`docs/mutation-testing.md`, 40 mutations, all killed).
 
 1. An unevaluated candidate cannot be approved.
 2. A candidate that failed the policy cannot be approved.
@@ -325,7 +332,7 @@ Integration first. The point is to be the governance layer over tools you alread
 npm install        # devDependencies only: TypeScript and ESLint
 npm run build      # emit plain JavaScript to dist/
 npm run check      # typecheck, lint, tests
-npm run mutate     # prove each safety gate fails when broken (38 mutations)
+npm run mutate     # prove each safety gate fails when broken (40 mutations)
 npm run smoke:package   # build, pack, install the tarball, run the installed CLI
 ```
 

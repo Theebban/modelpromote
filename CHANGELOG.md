@@ -60,7 +60,16 @@ will not load. Nothing is published, so nothing is migrated.
   `caseSetHash`, remain undetectable.
 - **The mutation harness fails on skipped mutations.** Two mutations silently stopped finding
   their target text during this work and reported neither killed nor survived while the run
-  still summarised as clean. 38 mutations, all killed, 0 survived, 0 invalid, 0 skipped.
+  still summarised as clean. 40 mutations, all killed, 0 survived, 0 invalid, 0 skipped.
+- **The CLI accepts its options before the subcommand.** `argv[0]` was read as the command, so
+  the README's own quickstart, which wraps the CLI in an alias carrying `--root`, failed at
+  every documented step with a confusing configuration error. Pre-existing and missed by two
+  reviews, because both drove the library and every hand-run put the command first. Found by
+  running the README verbatim from a clean clone. A new `tests/cli.test.ts` spawns the real
+  entry point and walks the documented five minutes end to end.
+- **The mutation harness restores the working tree on an interrupt.** A run killed by a timeout
+  left a deliberate break in a source file, and the old `EXIT` trap deleted the backup before
+  anything could be restored.
 - Demo determinism claim corrected: the application output is deterministic, the full terminal
   stream is not, because Node's type-stripping warning carries the process id.
 

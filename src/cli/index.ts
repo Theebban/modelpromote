@@ -47,6 +47,33 @@ function flag(argv: readonly string[], name: string, fallback: string): string {
   return v === undefined || v.startsWith('--') ? fallback : v;
 }
 
+/** Flags that consume the token after them, so it is never mistaken for the command. */
+const VALUE_FLAGS = new Set(['--root', '--migration', '--actor', '--reason']);
+
+/**
+ * The index of the subcommand, wherever it appears.
+ *
+ * Options may precede it. Reading `argv[0]` as the command looked equivalent and was not:
+ * the README's own quickstart wraps the CLI in an alias carrying `--root`, which puts the
+ * flag first, so every documented command in the five-minute walkthrough failed with a
+ * confusing config error. Found by running the README verbatim from a clean clone, which is
+ * the only way it could have been found, because every test called the CLI's functions
+ * directly and every hand-run used the other argument order.
+ */
+function commandIndex(argv: readonly string[]): number {
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === undefined) continue;
+    if (VALUE_FLAGS.has(a)) {
+      i += 1; // skip the flag's value
+      continue;
+    }
+    if (a.startsWith('-')) continue;
+    return i;
+  }
+  return -1;
+}
+
 /**
  * Load the project's own port wiring if it exists, otherwise use the demo wiring.
  *
@@ -96,7 +123,10 @@ Options
 `;
 
 async function main(argv: readonly string[]): Promise<number> {
-  const cmd = argv[0] ?? 'help';
+  const cmdAt = commandIndex(argv);
+  const cmd = cmdAt === -1 ? 'help' : (argv[cmdAt] ?? 'help');
+  /** The first positional argument AFTER the command, whatever precedes the command. */
+  const commandArg = cmdAt === -1 ? undefined : argv[cmdAt + 1];
   const root = flag(argv, 'root', process.cwd());
   const json = argv.includes('--json');
   const migrationFlag = flag(argv, 'migration', '');
@@ -133,8 +163,8 @@ async function main(argv: readonly string[]): Promise<number> {
   const config = loadConfig(root);
 
   if (cmd === 'register') {
-    const candidate = argv[1];
-    if (candidate === undefined || candidate.startsWith('--')) {
+    const candidate = commandArg;
+    if (candidate === undefined || candidate.startsWith('-')) {
       out('usage: modelshift register <candidate-model-id>');
       return 2;
     }
