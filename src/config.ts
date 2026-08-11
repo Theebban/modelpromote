@@ -34,7 +34,22 @@ export interface VerificationBounds {
 }
 
 export interface ModelshiftConfig {
+  /**
+   * The model production is serving today.
+   *
+   * Locked into each migration at `register`, and ENFORCED at activation: if the activation
+   * target reports something else when it is time to activate, the migration fails closed
+   * rather than promoting a candidate whose evidence describes a different starting point.
+   */
   readonly baselineModel: ModelId;
+  /**
+   * The model to revert to.
+   *
+   * Read at `register` and LOCKED into the migration. A normal rollback uses that lock, so
+   * editing this field mid-migration cannot redirect a rollback; the drift is reported
+   * instead. It remains the live authority for EMERGENCY rollback only, which runs when the
+   * ledger is unreadable and therefore cannot consult the lock.
+   */
   readonly rollbackModel: ModelId;
   readonly acceptance: AcceptancePolicy;
   readonly verification: VerificationBounds;

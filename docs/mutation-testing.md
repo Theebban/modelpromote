@@ -14,11 +14,15 @@ bash scripts/mutate.sh
 
 ## Current results
 
-19 mutations, all killed. The table below lists the originals; the corrections from the
-independent review add mutations for read-back gating on activation and rollback, two-phase
-ordering, semantic ledger validation, policy locking, fixture leakage, evidence validation,
-identifier rejection, report escaping and the abandon boundary. `scripts/mutate.sh` is the
-authoritative list.
+38 mutations, all killed. 0 survived, 0 invalid, 0 skipped.
+
+The table below lists the originals. The first independent review added mutations for
+read-back gating on activation and rollback, two-phase ordering, semantic ledger validation,
+policy locking, fixture leakage, evidence validation, identifier rejection, report escaping
+and the abandon boundary. The second added the `S`-prefixed set: evaluator coverage, the
+cross-event identity bindings, the locked rollback target, baseline-drift refusal, the verdict
+projection, registration atomicity and the recorded telemetry evidence class.
+`scripts/mutate.sh` is the authoritative list.
 
 | Mutation | Guarantee removed | Result |
 |---|---|---|
@@ -30,7 +34,28 @@ authoritative list.
 | Ledger chain check disabled | Edited history loads as valid | **killed**, 1 test |
 | Emergency rollback appends to the corrupt ledger | Recovery pollutes the artifact under investigation | **killed**, 1 test |
 
-## Three findings from these runs
+## Two findings from the second review's runs
+
+**A skipped mutation reads exactly like a passing one.** Renaming a variable and rewording a
+message moved the text two mutations searched for. Both reported `SKIP`, the run still ended
+`survived: 0`, and two guarantees, rollback read-back gating and duplicate result case ids,
+quietly stopped being exercised. Nothing in the summary line said so.
+
+The general shape: **a check whose target resolves to nothing still prints a clean verdict.**
+The harness now counts skips and exits non-zero on any of them, and on any `INVALID`, so a
+run cannot report success while proving less than it did yesterday.
+
+**One survivor was a redundancy, not a gap.** Removing the null-state guard in
+`activeMigrationId` killed no test, because `listMigrations` already excludes empty ledger
+files and the branch is unreachable behind it. That is a real result and it is recorded here
+rather than resolved by deleting the guard or by quietly dropping the mutation: the guard is
+deliberate defence in depth, the mutation now targets the live enforcement in
+`listMigrations`, and the redundancy is documented at the guard itself.
+
+The general shape: **a surviving mutant on defensive code is a documentation obligation.**
+Either make it reachable and test it, or say plainly that it is redundant and why it stays.
+
+## Three findings from the first review's runs
 
 They are the reason this file exists.
 

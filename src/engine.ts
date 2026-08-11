@@ -27,6 +27,7 @@ import type { ModelshiftConfig } from './config.ts';
 import { policyHash } from './config.ts';
 import {
   ActivationNotConfirmedError,
+  BaselineDriftError,
   IllegalTransitionError,
   NoMigrationError,
   RollbackNotConfirmedError,
@@ -44,19 +45,23 @@ import type {
   ModelId,
 } from './domain/types.ts';
 import { evaluateAcceptance, type AcceptanceVerdict } from './policy/acceptance.ts';
-import { assertValidEvidence } from './policy/evidence.ts';
+import { assertValidCaseSet, assertValidEvidence } from './policy/evidence.ts';
 import type { Ports } from './ports/index.ts';
 import {
   activeMigrationId,
   appendEvent,
   appendRecovery,
-  createMigrationFile,
   listMigrations,
   nextMigrationId,
   readMigration,
   storeExists,
 } from './store/ledger.ts';
-import { assertServingModel, runBoundedVerification, type BoundedRunResult, type TelemetryAssertion } from './verify/index.ts';
+import {
+  assertServingModelInWindow,
+  runBoundedVerification,
+  type BoundedRunResult,
+  type TelemetryAssertion,
+} from './verify/index.ts';
 import { hashCases } from './adapters/local/index.ts';
 
 /** A read-only projection of one migration's ledger. Computing it never writes. */
@@ -66,19 +71,50 @@ export interface MigrationView {
   readonly events: readonly MigrationEvent[];
   readonly candidate: ModelId | null;
   readonly baseline: ModelId | null;
+  /** The rollback target LOCKED at `register`. A normal rollback uses this, not config. */
+  readonly rollbackTarget: ModelId | null;
   readonly evaluation: ComparativeEvaluation | null;
+  /**
+   * The verdict CURRENTLY IN FORCE, or null when none is.
+   *
+   * Null after a re-evaluation or a policy invalidation, because both supersede whatever
+   * verdict came before them. It is deliberately not "the last accept, else the last
+   * reject": that spelling made an obsolete acceptance outlive the rejection that replaced
+   * it, so a migration sitting in REJECTED reported `verdict.accepted === true`.
+   */
   readonly verdict: AcceptanceVerdict | null;
   /** The policy hash in force when the current evidence was produced. */
   readonly governingPolicyHash: string | null;
   readonly approvedBy: string | null;
 }
 
-function detailOf<T>(events: readonly MigrationEvent[], action: MigrationAction, key: string): T | null {
+/**
+ * The most recent event among the given actions, or null.
+ *
+ * LATEST OVERALL, never latest-per-action. Searching for each action separately and then
+ * preferring one of the results reintroduces the stale-verdict defect: preference is not
+ * recency, and the record has an order for a reason.
+ */
+function latestOf(events: readonly MigrationEvent[], actions: readonly MigrationAction[]): MigrationEvent | null {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const e = events[i];
-    if (e !== undefined && e.action === action && key in e.detail) return e.detail[key] as T;
+    if (e !== undefined && actions.includes(e.action)) return e;
   }
   return null;
+}
+
+function detailOf<T>(events: readonly MigrationEvent[], action: MigrationAction, key: string): T | null {
+  const e = latestOf(events, [action]);
+  return e !== null && key in e.detail ? (e.detail[key] as T) : null;
+}
+
+/** Every action that establishes, replaces or voids a verdict. */
+const VERDICT_BEARING: readonly MigrationAction[] = ['accept', 'reject', 'evaluate', 'invalidateEvidence'];
+
+function currentVerdict(events: readonly MigrationEvent[]): AcceptanceVerdict | null {
+  const e = latestOf(events, VERDICT_BEARING);
+  if (e === null || (e.action !== 'accept' && e.action !== 'reject')) return null;
+  return (e.detail['verdict'] as AcceptanceVerdict | undefined) ?? null;
 }
 
 function view(root: string, id: MigrationId): MigrationView {
@@ -89,9 +125,9 @@ function view(root: string, id: MigrationId): MigrationView {
     events,
     candidate: detailOf<ModelId>(events, 'register', 'candidate'),
     baseline: detailOf<ModelId>(events, 'register', 'baseline'),
+    rollbackTarget: detailOf<ModelId>(events, 'register', 'rollbackTarget'),
     evaluation: detailOf<ComparativeEvaluation>(events, 'evaluate', 'evaluation'),
-    verdict:
-      detailOf<AcceptanceVerdict>(events, 'accept', 'verdict') ?? detailOf<AcceptanceVerdict>(events, 'reject', 'verdict'),
+    verdict: currentVerdict(events),
     governingPolicyHash: detailOf<string>(events, 'evaluate', 'governingPolicyHash'),
     approvedBy: detailOf<string>(events, 'approve', 'approvedBy'),
   };
@@ -153,8 +189,15 @@ function transition(
 /**
  * Begin a migration.
  *
- * The governing policy is hashed HERE, before any evidence exists, so the rules cannot be
- * chosen to fit a result that has already been seen.
+ * Three things are LOCKED here, before any evidence exists:
+ *
+ *   the governing policy   so the rules cannot be chosen to fit a result already seen;
+ *   the baseline           so the evidence names what the candidate was measured against;
+ *   the rollback target    so the model declared safe at the start is the one a rollback
+ *                          reverts to, whatever configuration says later.
+ *
+ * The whole record is written in ONE atomic step. There is no moment at which a migration
+ * file exists without its `register` record in it.
  */
 export function register(
   root: string,
@@ -163,6 +206,9 @@ export function register(
   now: () => string,
 ): { event: MigrationEvent; id: MigrationId } {
   assertSafeIdentifier(candidate, 'candidate model id');
+  // These reach the audit record too, by way of configuration rather than a CLI flag.
+  assertSafeIdentifier(config.baselineModel, 'baselineModel');
+  assertSafeIdentifier(config.rollbackModel, 'rollbackModel');
 
   const open = activeMigrationId(root);
   if (open !== null) {
@@ -171,13 +217,17 @@ export function register(
   }
 
   const id = nextMigrationId(root);
-  createMigrationFile(root, id);
   const event = transition(
     root,
     id,
     'register',
     'system',
-    { candidate, baseline: config.baselineModel, policyHashAtRegister: policyHash(config.acceptance) },
+    {
+      candidate,
+      baseline: config.baselineModel,
+      rollbackTarget: config.rollbackModel,
+      policyHashAtRegister: policyHash(config.acceptance),
+    },
     now,
   );
   return { event, id };
@@ -190,6 +240,9 @@ export async function evaluate(
   ports: Ports,
 ): Promise<{ event: MigrationEvent; evaluation: ComparativeEvaluation }> {
   const id = requireActive(root);
+  // Checked before anything is measured. A case set with duplicate, empty or malformed ids
+  // cannot support the exact-coverage rule the evaluator's output is held to.
+  assertValidCaseSet(cases);
   let v = view(root, id);
   if (v.candidate === null || v.baseline === null) throw new NoMigrationError(root);
   // Captured before the branch below reassigns `v`: the candidate and baseline are fixed
@@ -290,6 +343,14 @@ export interface ActivationOutcome {
  * A target whose `write()` silently does nothing is the common real failure: a stale client,
  * a cached config, a deploy that did not roll, a permission error swallowed by an SDK. All
  * of them look like success to the writer.
+ *
+ * BASELINE DRIFT FAILS CLOSED. Before anything is recorded or written, the currently serving
+ * model must be the baseline this migration measured against. It is possible to evaluate a
+ * candidate against A, have production quietly move to B, and then "migrate" from B on the
+ * strength of evidence that only ever described a change from A. The evidence is not wrong,
+ * it just answers a different question than the one being asked, and nothing downstream can
+ * tell. The baseline is never silently updated to match: a changed production baseline
+ * invalidates the migration's assumptions, and re-measuring is the only honest repair.
  */
 export async function activate(
   root: string,
@@ -299,13 +360,16 @@ export async function activate(
   assertSafeIdentifier(actor, 'actor');
   const id = requireActive(root);
   const v = view(root, id);
-  if (v.candidate === null) throw new NoMigrationError(root);
+  if (v.candidate === null || v.baseline === null) throw new NoMigrationError(root);
   if (v.state === null) throw new NoMigrationError(root);
 
   // Validate before touching the outside world, so a refused activation changes nothing.
   nextState(v.state, 'beginActivation');
 
   const previous = await ports.activation.read();
+  if (previous !== v.baseline) {
+    throw new BaselineDriftError(v.baseline, previous, v.candidate, ports.activation.name);
+  }
 
   // PHASE 1: record the intent BEFORE the side effect.
   transition(root, id, 'beginActivation', `operator:${actor}`, {
@@ -351,13 +415,20 @@ export async function verify(
   const adapter = ports.models.get(serving);
   if (adapter === undefined) throw new Error(`No adapter registered for the serving model "${serving}"`);
 
-  // Mark where telemetry stands BEFORE issuing traffic, then assert only over what this run
-  // produced. Otherwise observations from evaluation would count as evidence of activation.
+  // Open a WINDOW: mark where telemetry stands before issuing traffic, then assert only over
+  // observations recorded after that mark. Without it, observations from evaluation would
+  // count as evidence of activation.
+  //
+  // Be precise about what this proves. The window is TEMPORAL, not per-request: modelshift
+  // does not propagate an id through your adapter, so it cannot pair the calls it issued
+  // with the rows your telemetry produced. A confirmation says "everything telemetry saw
+  // after this point was served by the candidate", which is weaker than "these exact calls
+  // were served by the candidate" and is stated that way everywhere it is reported.
   const before = await ports.telemetry.observations(null);
   const marker = before.at(-1)?.requestId ?? null;
 
   const run = await runBoundedVerification(inputs, adapter, config.verification);
-  const assertion = await assertServingModel(ports.telemetry, v.candidate, config.verification, marker);
+  const assertion = await assertServingModelInWindow(ports.telemetry, v.candidate, config.verification, marker);
 
   const event = transition(root, id, assertion.confirmed ? 'verify' : 'failVerification', 'system', {
     run,
@@ -386,16 +457,33 @@ export function stabilise(root: string, actor: string, now: () => string): Migra
 
 export interface RollbackOutcome {
   readonly confirmed: boolean;
+  /** The LOCKED target this rollback used. Taken from the migration, not from config. */
   readonly target: ModelId;
   readonly observed: ModelId;
   readonly state: MigrationState;
+  /** What configuration currently names, which may no longer be the locked target. */
+  readonly configuredTarget: ModelId;
+  /** True when the two disagree. Reported, never silently resolved in config's favour. */
+  readonly configDrift: boolean;
 }
 
 /**
  * TWO-PHASE ROLLBACK. Never records ROLLED_BACK without a positive read-back.
  *
- * The target comes from CONFIGURATION rather than ledger history, so a rollback still works
- * when history is unusable.
+ * THE TARGET IS THE ONE LOCKED AT `register`, not whatever configuration says now.
+ *
+ * An independent review registered a migration with a safe target, activated the candidate,
+ * edited `rollbackModel` in the config file to point at a REGRESSING model, and invoked
+ * rollback. The tool dutifully "rolled back" production onto the regression and recorded
+ * ROLLED_BACK. A safe target that any later config edit can redirect is not a safe target;
+ * it is a variable with a reassuring name.
+ *
+ * When config disagrees with the lock, the LOCK WINS and the drift is reported: refusing
+ * instead would block a rollback over a configuration question, and blocking a rollback is
+ * the one failure this framework never chooses. Emergency rollback is different, and
+ * deliberately so: it runs when the ledger is unreadable, so it cannot consult the lock and
+ * takes configuration as its authority. That is a different trust basis, not the same one
+ * reached another way.
  */
 export async function rollback(
   root: string,
@@ -407,29 +495,42 @@ export async function rollback(
   const id = requireActive(root);
   const v = view(root, id);
   if (v.state === null) throw new NoMigrationError(root);
+  if (v.rollbackTarget === null) throw new NoMigrationError(root);
   nextState(v.state, 'beginRollback');
+
+  const target = v.rollbackTarget;
+  const configuredTarget = config.rollbackModel;
+  const configDrift = configuredTarget !== target;
+  const drift = configDrift ? { configuredRollbackModel: configuredTarget, configDrift: true } : {};
 
   const from = await ports.activation.read();
 
-  transition(root, id, 'beginRollback', `operator:${actor}`, { from, target: config.rollbackModel, activationTarget: ports.activation.name }, ports.now);
+  transition(
+    root,
+    id,
+    'beginRollback',
+    `operator:${actor}`,
+    { from, target, activationTarget: ports.activation.name, ...drift },
+    ports.now,
+  );
 
-  await ports.activation.write(config.rollbackModel);
+  await ports.activation.write(target);
   const observed = await ports.activation.read();
-  const confirmed = observed === config.rollbackModel;
+  const confirmed = observed === target;
 
   const event = transition(
     root,
     id,
     confirmed ? 'confirmRollback' : 'failRollback',
     'system',
-    { revertedFrom: from, rollbackTarget: config.rollbackModel, observedModel: observed, confirmed, viaCodeRelease: false },
+    { revertedFrom: from, rollbackTarget: target, observedModel: observed, confirmed, viaCodeRelease: false, ...drift },
     ports.now,
   );
 
   if (!confirmed) {
-    throw new RollbackNotConfirmedError(config.rollbackModel, observed, ports.activation.name);
+    throw new RollbackNotConfirmedError(target, observed, ports.activation.name);
   }
-  return { confirmed, target: config.rollbackModel, observed, state: event.to };
+  return { confirmed, target, observed, state: event.to, configuredTarget, configDrift };
 }
 
 export interface EmergencyOutcome {
@@ -445,6 +546,13 @@ export interface EmergencyOutcome {
  * This is what makes the fail-open promise true rather than merely stated: when the ledger
  * fails its integrity check the state is unknown, but the declared safe model is not, and
  * that is what the operator needs.
+ *
+ * A DIFFERENT TRUST AUTHORITY FROM A NORMAL ROLLBACK, on purpose. A normal rollback uses the
+ * target locked into the migration at `register`; this one cannot, because obtaining that
+ * lock means reading the very file that just failed its integrity check. So it uses
+ * `config.rollbackModel`, and the record it writes says so. The two paths are not the same
+ * guarantee reached by different routes, and claiming they were would be the more comfortable
+ * lie: config is mutable, and on this path that mutability is the price of working at all.
  *
  * It is still gated on read-back. Reporting a successful revert while the target serves
  * something else would be the most dangerous message the tool could print, because it is
@@ -474,6 +582,7 @@ export async function emergencyRollback(
     confirmed,
     outcome: confirmed ? 'CONFIRMED by read-back' : 'NOT CONFIRMED, the target still reports another model',
     ledgerState: 'UNREADABLE at the time of this action',
+    targetAuthority: 'configuration (rollbackModel), because the ledger-locked target was unreadable',
   });
 
   if (!confirmed) {

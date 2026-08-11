@@ -79,6 +79,7 @@ export {
 // Errors, so callers can branch on failure kind rather than on message text.
 export {
   ActivationNotConfirmedError,
+  BaselineDriftError,
   ConfigError,
   IllegalTransitionError,
   InvalidEvidenceError,
@@ -102,7 +103,16 @@ export {
   storeExists,
 } from './store/ledger.ts';
 
+// Ledger integrity, for tooling that wants to validate a record it was handed.
+export { assertCrossEventConsistency, type MigrationIdentity } from './store/consistency.ts';
+
 export { renderReport } from './audit/report.ts';
 export { evaluateAcceptance, type AcceptanceVerdict } from './policy/acceptance.ts';
-export { assertValidEvidence } from './policy/evidence.ts';
-export { assertServingModel, runBoundedVerification, type BoundedRunResult, type TelemetryAssertion } from './verify/index.ts';
+export { assertValidCaseSet, assertValidEvidence, evaluationResultProblems } from './policy/evidence.ts';
+export {
+  assertServingModelInWindow,
+  runBoundedVerification,
+  type BoundedRunResult,
+  type TelemetryAssertion,
+  type TelemetryEvidenceClass,
+} from './verify/index.ts';

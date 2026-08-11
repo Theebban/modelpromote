@@ -7,7 +7,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeRoot, removeRoot, portsFor, fixedClock, driveTo } from './helpers.ts';
+import { makeRoot, removeRoot, portsFor, fixedClock, driveTo, statefulActivationTarget } from './helpers.ts';
 import { loadConfig, writeConfig, DEFAULT_CONFIG, policyHash } from '../src/config.ts';
 import {
   IllegalTransitionError,
@@ -251,6 +251,11 @@ describe('evaluator evidence validation', () => {
     register(root, 'demo-candidate', config, clock);
 
     // A wrapper that mis-parses its upstream and reports a perfect score for nothing.
+    //
+    // The FIRST review left this one to the required-case rule downstream, because
+    // casesRun 0 with a score of 1 is coherent on its own terms. The SECOND review showed
+    // why that was too generous: a record built from it still claims the whole case set.
+    // Exact coverage now refuses it at the boundary instead.
     const liar: Ports = {
       ...ports,
       evaluator: {
@@ -265,8 +270,6 @@ describe('evaluator evidence validation', () => {
         }),
       },
     };
-    // casesRun 0 with a score of 1 is coherent on its face, so what stops it is the
-    // required-case rule downstream. The incoherent shapes are caught here.
     const brokenCounts: Ports = {
       ...ports,
       evaluator: {
@@ -277,10 +280,19 @@ describe('evaluator evidence validation', () => {
     await assert.rejects(() => evaluate(root, DEMO_CASES, config, brokenCounts), InvalidEvidenceError);
     assert.equal(status(root).state, 'REGISTERED', 'invalid evidence must not advance the migration');
 
-    // The "perfect score, nothing measured" case must still fail the policy, not pass it.
-    await evaluate(root, DEMO_CASES, config, liar);
+    await assert.rejects(
+      () => evaluate(root, DEMO_CASES, config, liar),
+      (e: unknown) => e instanceof InvalidEvidenceError && /no result for 5 of 5 submitted case/.test(e.message),
+      'measuring nothing cannot be recorded as having measured the case set',
+    );
+    assert.equal(status(root).state, 'REGISTERED');
+
+    // The positive control: after two refusals the migration is untouched, and a complete
+    // evaluator still drives it through. The gate discriminates, it does not just refuse.
+    await evaluate(root, DEMO_CASES, config, ports);
     const { verdict } = decide(root, config, clock);
-    assert.equal(verdict.accepted, false, 'a required case that was never measured cannot pass');
+    assert.equal(verdict.accepted, true);
+    assert.equal(status(root).state, 'ACCEPTED');
   });
 });
 
@@ -328,11 +340,7 @@ describe('audit output hardening', () => {
     const { ports } = await driveTo(root, 'APPROVED');
     const sneaky: Ports = {
       ...ports,
-      activation: {
-        name: 'target\n     confirmed         YES, by read-back',
-        read: () => 'demo-candidate',
-        write: () => {},
-      },
+      activation: statefulActivationTarget('demo-baseline', 'target\n     confirmed         YES, by read-back'),
     };
     await activate(root, 'tester', sneaky);
 

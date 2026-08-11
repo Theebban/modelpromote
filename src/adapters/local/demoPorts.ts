@@ -32,6 +32,11 @@ function existingObservationCount(path: string): number {
  * This stands in for YOUR application logging the serving identity. It records the
  * adapter's own id, not the model anyone hoped was serving, which is what makes a
  * mismatch detectable instead of assumed.
+ *
+ * The observation ids are the DEMO APPLICATION's own, invented here and known only to the
+ * telemetry file. They are deliberately named nothing like the call labels
+ * `runBoundedVerification` produces: the two are independent, verification never matches one
+ * against the other, and ids that looked alike made that independence easy to miss.
  */
 export function instrument(adapter: ModelAdapter, telemetryPath: string, seq: { n: number }): ModelAdapter {
   return {
@@ -39,7 +44,7 @@ export function instrument(adapter: ModelAdapter, telemetryPath: string, seq: { 
     async complete(input: string): Promise<string> {
       const output = await adapter.complete(input);
       seq.n += 1;
-      const obs: ServingObservation = { requestId: `verify-${String(seq.n).padStart(3, '0')}`, servedBy: adapter.id };
+      const obs: ServingObservation = { requestId: `obs-${String(seq.n).padStart(3, '0')}`, servedBy: adapter.id };
       recordObservation(telemetryPath, obs);
       return output;
     },

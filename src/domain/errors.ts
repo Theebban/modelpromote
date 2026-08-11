@@ -37,7 +37,9 @@ export class LedgerCorruptError extends Error {
       `Migration ledger at ${path} could not be read: ${reason}.\n` +
         (line === null ? '' : `  first bad record: line ${line}\n`) +
         '  The true migration state is UNKNOWN. No forward action is permitted.\n' +
-        '  Rollback remains available and uses the rollback target declared in configuration.',
+        '  Rollback remains available through the EMERGENCY path, which reads no ledger and\n' +
+        '  takes its target from configuration. That is a different authority from a normal\n' +
+        '  rollback, which uses the target locked into this migration when it began.',
     );
     this.name = 'LedgerCorruptError';
     this.path = path;
@@ -120,6 +122,41 @@ export class RollbackNotConfirmedError extends Error {
     this.name = 'RollbackNotConfirmedError';
     this.requested = requested;
     this.observed = observed;
+  }
+}
+
+/**
+ * Production is not serving the baseline this migration measured its candidate against.
+ *
+ * Raised BEFORE anything is recorded and before the activation target is touched, so a
+ * refused activation leaves both the ledger and production exactly as they were.
+ */
+export class BaselineDriftError extends Error {
+  readonly migrationBaseline: string;
+  readonly observedServing: string;
+  readonly candidate: string;
+
+  constructor(migrationBaseline: string, observedServing: string, candidate: string, target: string) {
+    super(
+      'Activation refused: production is not serving this migration\'s baseline.\n' +
+        `  migration baseline : ${migrationBaseline}\n` +
+        `  currently serving  : ${observedServing}\n` +
+        `  candidate          : ${candidate}\n` +
+        `  activation target  : ${target}\n` +
+        `  The candidate was measured against ${migrationBaseline}, so the evidence on record\n` +
+        `  describes a change FROM ${migrationBaseline}, not the change you would be making now.\n` +
+        '  Nothing was written: no activation event was recorded and the target was not modified.\n' +
+        '  Safe next action:\n' +
+        `    - if ${observedServing} is what production should be serving, abandon this migration,\n` +
+        `      set baselineModel to ${observedServing}, and register the candidate again so it is\n` +
+        '      measured against what is actually running; or\n' +
+        `    - if ${observedServing} is not intended, revert production to ${migrationBaseline} first,\n` +
+        '      then activate.',
+    );
+    this.name = 'BaselineDriftError';
+    this.migrationBaseline = migrationBaseline;
+    this.observedServing = observedServing;
+    this.candidate = candidate;
   }
 }
 

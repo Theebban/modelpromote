@@ -85,15 +85,60 @@ echo "ok"
 
 step "6. import the built library entry point"
 cat > "$WORK/consumer/lib-check.mjs" <<'EOF'
-import { MIGRATION_STATES, TRANSITIONS, nextState, IllegalTransitionError } from 'modelshift';
+import {
+  MIGRATION_STATES, TRANSITIONS, nextState, IllegalTransitionError,
+  BaselineDriftError, assertCrossEventConsistency, assertValidEvidence, statusOf,
+} from 'modelshift';
 if (!Array.isArray(MIGRATION_STATES) || MIGRATION_STATES.length === 0) throw new Error('MIGRATION_STATES missing');
 if (nextState('APPROVED', 'beginActivation') !== 'ACTIVATING') throw new Error('nextState wrong');
 try { nextState('REGISTERED', 'beginActivation'); throw new Error('expected refusal'); }
 catch (e) { if (!(e instanceof IllegalTransitionError)) throw new Error('wrong error type: ' + e.name); }
 if (typeof TRANSITIONS !== 'object') throw new Error('TRANSITIONS missing');
+if (typeof BaselineDriftError !== 'function') throw new Error('BaselineDriftError not exported');
+if (typeof assertCrossEventConsistency !== 'function') throw new Error('assertCrossEventConsistency not exported');
+
+// Exact evaluator coverage, through the PUBLIC surface of the built package.
+const cases = [{ id: 'a', input: '', expected: '' }, { id: 'b', input: '', expected: '' }];
+const partial = { modelId: 'm', casesRun: 1, passed: 1, score: 1, criticalFailures: [],
+  results: [{ caseId: 'a', output: '', passed: true, score: 1 }] };
+let refused = false;
+try { assertValidEvidence(partial, 'm', cases); } catch { refused = true; }
+if (!refused) throw new Error('partial evaluator coverage was accepted by the installed package');
+
+// The verdict projection must be the verdict in force, read from a real ledger on disk.
+const v = statusOf(process.argv[2], '0001');
+if (v.verdict?.accepted !== true) throw new Error('verdict projection wrong on a closed migration');
+if (v.rollbackTarget !== 'demo-baseline') throw new Error('rollback target not locked in the record');
 console.log('library import ok');
 EOF
-node "$WORK/consumer/lib-check.mjs" || fail "public library import"
+node "$WORK/consumer/lib-check.mjs" "$PROJ" || fail "public library import"
+echo "ok"
+
+step "7. the INSTALLED binary refuses a substituted candidate identity"
+LEDGER="$PROJ/.modelshift/migrations/0001.jsonl"
+cp "$LEDGER" "$WORK/ledger.bak"
+# One field. No action, no from, no to, no sequence change.
+node -e '
+const fs = require("fs");
+const p = process.argv[1];
+const lines = fs.readFileSync(p, "utf8").trim().split("\n");
+const first = JSON.parse(lines[0]);
+first.detail.candidate = "demo-regression";
+lines[0] = JSON.stringify(first);
+fs.writeFileSync(p, lines.join("\n") + "\n");
+' "$LEDGER"
+
+# Addressed explicitly: a bare `status` reports the ACTIVE migration, which by this point is
+# 0002, and would pass while 0001 sat corrupt. Integrity is per migration file.
+if "$MS" status --migration 0001 --root "$PROJ" > "$WORK/tamper.log" 2>&1; then
+  cat "$WORK/tamper.log"
+  fail "the installed binary accepted a substituted candidate identity"
+fi
+grep -q "cross-event inconsistency" "$WORK/tamper.log" || { cat "$WORK/tamper.log"; fail "expected a cross-event refusal"; }
+"$MS" report --migration 0001 --root "$PROJ" > "$WORK/tamper-report.log" 2>&1 \
+  && { cat "$WORK/tamper-report.log"; fail "the report rendered a substituted identity"; }
+cp "$WORK/ledger.bak" "$LEDGER"
+"$MS" status --migration 0001 --root "$PROJ" > /dev/null 2>&1 || fail "restoring the ledger should make it readable again"
 echo "ok"
 
 echo

@@ -59,6 +59,7 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
   const first = events[0];
   out.push(line('candidate', s(first?.detail['candidate'])));
   out.push(line('previous model', s(first?.detail['baseline'])));
+  out.push(line('rollback target', `${s(first?.detail['rollbackTarget'])}  (locked at register)`));
 
   const closed = TERMINAL_STATES.includes(state);
   const atRisk = LIVE_RISK_STATES.includes(state) && !closed;
@@ -106,7 +107,14 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
     }
     if (e.action === 'verify' || e.action === 'failVerification') {
       const run = e.detail['run'] as { requestsMade?: number; requestsAvailable?: number; stoppedBy?: string; truncated?: boolean } | undefined;
-      const a = e.detail['assertion'] as { observed?: string[]; observationCount?: number; reason?: string; confirmed?: boolean } | undefined;
+      const a = e.detail['assertion'] as {
+        observed?: string[];
+        observationCount?: number;
+        reason?: string;
+        confirmed?: boolean;
+        evidenceClass?: string;
+        windowOpensAfter?: string | null;
+      } | undefined;
       if (run) {
         out.push(line('  requests made', `${run.requestsMade} of ${run.requestsAvailable} available, stopped by ${run.stoppedBy}`));
         if (run.truncated === true) out.push(line('  truncated', 'YES, the declared ceiling was reached'));
@@ -116,6 +124,13 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
         out.push(line('  observations', String(a.observationCount ?? 0)));
         out.push(line('  confirmed', a.confirmed === true ? 'YES' : 'NO'));
         out.push(line('  reason', s(a.reason, '')));
+        // The strength of the evidence, stated with the evidence. A reader should never have
+        // to infer how much a confirmation is worth.
+        out.push(line('  evidence class', s(a.evidenceClass, 'unrecorded')));
+        out.push(line('  window opens after', s(a.windowOpensAfter, '(the whole telemetry history)')));
+        out.push('  (temporal-window: every observation recorded AFTER the mark above named the');
+        out.push('   expected model. The calls this run issued are NOT correlated with individual');
+        out.push('   telemetry rows, so other traffic in the same window counts toward this claim)');
       }
     }
     if (e.action === 'abandon') {
@@ -124,7 +139,12 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
     }
     if (e.action === 'beginRollback') {
       out.push(line('  reverting from', s(e.detail['from'])));
-      out.push(line('  rollback target', s(e.detail['target'])));
+      out.push(line('  rollback target', `${s(e.detail['target'])}  (locked at register)`));
+      if (e.detail['configDrift'] === true) {
+        out.push(line('  *** config drift', `configuration now names ${s(e.detail['configuredRollbackModel'])}`));
+        out.push('      The LOCKED target was used. A rollback target that a later config edit');
+        out.push('      can redirect is not a safe target. Reconcile the configuration.');
+      }
     }
     if (e.action === 'confirmRollback' || e.action === 'failRollback') {
       out.push(line('  rollback target', s(e.detail['rollbackTarget'])));
@@ -142,12 +162,23 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
   out.push('ATTESTATION');
   out.push('-'.repeat(72));
   out.push('Every line above is derived from the append-only ledger. The report has no other');
-  out.push('source, so it cannot assert a transition that was not recorded. On read, every');
-  out.push('record is checked three ways: sequence continuity, from/to chain continuity, and');
-  out.push('whether the (action, from, to) triple is one the state machine could produce. A');
-  out.push('spliced or hand-edited ledger fails to load rather than rendering a plausible');
-  out.push('history. ACTIVATED and ROLLED_BACK are recorded only after the activation target');
-  out.push('positively read back the expected model.');
+  out.push('source, so it cannot assert a transition that was not recorded. ACTIVATED and');
+  out.push('ROLLED_BACK are recorded only after the activation target positively read back the');
+  out.push('expected model.');
+  out.push('');
+  out.push('WHAT LOADING THIS LEDGER PROVED. Every record was checked four ways: record');
+  out.push('structure, sequence continuity, from/to chain continuity, and whether its');
+  out.push('(action, from, to) triple is one the state machine could produce. The records were');
+  out.push('then checked AGAINST EACH OTHER: the models, policy hashes, approvals and outcomes');
+  out.push('they name all describe one migration, so a single edited detail field cannot');
+  out.push('substitute a model that was never evaluated.');
+  out.push('');
+  out.push('WHAT IT DID NOT PROVE. This is inconsistency detection, not tamper resistance.');
+  out.push('There is no hash chain and no signature, so a ledger rewritten consistently');
+  out.push('throughout loads cleanly. Fields nothing else cross-references, including');
+  out.push('timestamps, free-text reasons, adapter labels and the case-set hash, can be altered');
+  out.push('without detection. Treat this as an honest record of a cooperative process, not as');
+  out.push('evidence against someone who can write the file.');
 
   return out.join('\n');
 }

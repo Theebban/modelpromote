@@ -40,15 +40,36 @@ is wrong, silently, in the direction of looking better than reality. Deriving bo
 and the report from one append-only source makes "the report claims something that did not
 happen" structurally impossible rather than merely tested.
 
-Reads are strict in three independent ways: sequence continuity, `from`/`to` chain continuity,
-and **semantic legality**.
+Reads are strict in four independent ways: sequence continuity, `from`/`to` chain continuity,
+**semantic legality**, and **cross-event consistency**. Each layer exists because the ones
+before it were demonstrated insufficient, by review, on this code.
 
-The third was added after an independent review demonstrated the first two were insufficient.
-Changing a single field of a valid record, the first event's `to` from `REGISTERED` to
-`APPROVED`, left the sequence contiguous and the chain intact (its `from` is `null` either
-way), loaded cleanly, and allowed activation with no evaluation and no approval. Structure and
-chain describe the SHAPE of a history; only the transition table describes which histories
-were possible. Every record is now validated against it.
+The third was added after the first review changed a single field of a valid record, the first
+event's `to` from `REGISTERED` to `APPROVED`. The sequence stayed contiguous, the chain stayed
+intact (its `from` is `null` either way), the ledger loaded, and activation was permitted with
+no evaluation and no approval. Structure and chain describe the SHAPE of a history; only the
+transition table describes which histories were possible.
+
+The fourth was added after the second review changed a different single field: `detail.candidate`
+on the register record, from `demo-candidate` to `demo-regression`. No action, no `from`, no `to`.
+All three earlier layers passed, `status()` reported the substituted model, and `activate()` put
+it into production and recorded `ACTIVATED`. The lesson is one level up from the first:
+
+> A legal sequence of states is not enough. The candidate, baseline, policy, evidence and
+> rollback target that those states refer to must describe the same migration.
+
+So the identity is fixed by the `register` record and every later record is checked against it
+and against the records it depends on: evidence must name the registered models, a verdict must
+agree with its own action and cite the policy its evidence was produced under, an approval must
+name its own actor, an activation must request the registered candidate, a rollback must target
+the locked model. Type-correctness of a field proves nothing here. The check is relational.
+
+Be exact about what this buys. It is inconsistency detection, not tamper resistance. There is
+no hash chain and no signature, so a ledger rewritten coherently throughout still loads, and a
+test in `tests/cross-event.test.ts` asserts that it does, so the limitation cannot quietly stop
+being true. Fields nothing else cross-references remain undetectable. The word "tamper-evident"
+was withdrawn from this project for that reason, and it should not come back until a mechanism
+supports it.
 
 ### The policy is locked before the evidence exists
 
@@ -89,8 +110,27 @@ Blocking a promotion costs an operator five minutes. Blocking a rollback costs a
 two directions do not get symmetric caution.
 
 The same reasoning applies to a corrupt ledger. Forward motion stops entirely, but rollback
-still works, because the rollback target comes from configuration rather than from history.
-You do not need a readable ledger to know what you declared safe.
+still works, because the EMERGENCY path takes its target from configuration rather than from
+history. You do not need a readable ledger to know what you declared safe.
+
+That is a deliberate split in authority, and the two halves are not interchangeable:
+
+| | Normal rollback | Emergency rollback |
+|---|---|---|
+| Target from | the value locked into the migration at `register` | `config.rollbackModel`, live |
+| Available when | the ledger reads | always, including when the ledger does not |
+| Config edits | cannot redirect it; drift is reported | are the authority |
+
+The second review made the case for the lock by editing `rollbackModel` to name a regressing
+model mid-migration and invoking rollback. The tool reverted production onto the regression and
+recorded `ROLLED_BACK`. A safe target that any later config edit can redirect is not a safe
+target; it is a variable with a reassuring name.
+
+Refusing on drift was the other option and it was rejected: blocking a rollback over a
+configuration disagreement is exactly the failure this file spends a section arguing against.
+The lock wins, the drift is reported in the outcome, on the CLI and in the ledger, and the
+emergency path stays as the escape hatch for the case where configuration really is the better
+authority. Claiming both paths derive authority the same way would be tidier and false.
 
 This one is worth calling out because the first implementation got it wrong. The error
 message told the operator that rollback remained available, and it did not: every transition
@@ -127,10 +167,51 @@ model actually answered". Those come from different ports on purpose. A config w
 silently no-ops, a cached client, a deployment that did not roll: all of them look like
 success to a writer and like failure to a telemetry check.
 
+### Activation refuses when the baseline has moved
+
+The read before the write is not only there to capture `previousModel`. If the target reports
+anything other than the baseline this migration measured against, activation stops before
+recording an intent and before touching the target.
+
+The second review built the case: evaluate a candidate against A, let production quietly move
+to B, then activate. The evidence is not *wrong*, it simply answers a question nobody is asking
+any more, and nothing downstream can tell the difference between "measured against what is
+running" and "measured against what used to be running". Updating the baseline to match would
+be the obvious convenience and it is the wrong move: it would rewrite the premise of the
+evidence to fit whatever happened to be true at activation time. Re-measuring is the only
+honest repair, so the error says so and names both models.
+
+## What the telemetry claim actually is
+
+A confirmation from `assertServingModelInWindow` proves:
+
+> every observation the telemetry source reported after the window opened named the candidate,
+> and there were at least `minObservations` of them.
+
+It does not prove that the specific calls `runBoundedVerification` issued were those
+observations. modelshift does not propagate a correlation id through `ModelAdapter`, so it
+cannot pair one with the other. The second review demonstrated the gap directly: bounded calls,
+then unrelated ambient candidate telemetry after the mark, and verification confirmed.
+
+Two ways out were available. Building a correlation contract would mean pushing an id through
+the adapter boundary and requiring every telemetry source to echo it back, which is a
+distributed-tracing feature wearing a small interface, and an id the adapters cannot really
+carry would move the same gap somewhere less visible. Keeping the temporal claim and naming it
+exactly costs nothing and lies about nothing. V0 does the second: the assertion carries
+`evidenceClass: 'temporal-window'`, the type is named for the window, the reason strings say
+"not a per-request correlation", and the report prints the limitation next to the result. The
+run's own ids are `issuedCallLabels`, not `requestIds`, because they are labels for a local
+report and nothing outside the function has ever seen them.
+
 ## Determinism
 
 Time enters through `Ports.now`. Tests inject a fixed clock, so audit output is
 byte-deterministic. Nothing else in the core reads the clock, and nothing uses randomness.
+
+The **application** output of `npm run demo` is therefore identical run to run. The full
+terminal stream is not: Node's experimental type-stripping warning carries the process id.
+Suppressing a runtime diagnostic to make a claim come true would be the wrong repair, so the
+claim is worded to match what is actually deterministic.
 
 ## What is deliberately absent
 

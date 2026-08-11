@@ -5,14 +5,21 @@
 // stays exactly where it is and the next `register` opens a new one. History is therefore
 // retained by default and needs no archiving step and no manual deletion.
 //
-// Reads are strict in three independent ways:
-//   1. STRUCTURE   parseable JSON, known enum members, contiguous sequence.
-//   2. CHAIN       each event's `from` equals the previous event's `to`.
-//   3. SEMANTICS   each (action, from, to) is a transition the machine could have produced.
+// Reads are strict in four independent ways:
+//   1. STRUCTURE    parseable JSON, known enum members, contiguous sequence.
+//   2. CHAIN        each event's `from` equals the previous event's `to`.
+//   3. SEMANTICS    each (action, from, to) is a transition the machine could have produced.
+//   4. CROSS-EVENT  the models, policy hashes and outcomes the records name agree with each
+//                   other and with the migration's registered identity.
 //
-// The third exists because the first two are satisfiable by a forgery. Editing one field of
-// a valid record (the first event's `to`, from REGISTERED to APPROVED) keeps the structure
-// and the chain intact while inventing a migration that skipped evaluation and approval.
+// Layer 3 exists because the first two are satisfiable by a forgery. Editing one field of a
+// valid record (the first event's `to`, from REGISTERED to APPROVED) keeps the structure and
+// the chain intact while inventing a migration that skipped evaluation and approval.
+//
+// Layer 4 exists because the first THREE are also satisfiable by a forgery. Editing
+// `detail.candidate` on the register record changes no action and no state, so layers 1 to 3
+// all pass, and the migration then activates a model nothing ever evaluated. See
+// `consistency.ts` for the relational checks that close it.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,6 +27,7 @@ import { LedgerCorruptError } from '../domain/errors.ts';
 import type { MigrationEvent, MigrationId, MigrationState } from '../domain/types.ts';
 import { MIGRATION_ACTIONS, MIGRATION_STATES, TERMINAL_STATES } from '../domain/types.ts';
 import { foldState, isLegalEvent } from '../domain/machine.ts';
+import { assertCrossEventConsistency } from './consistency.ts';
 
 export const STATE_DIR = '.modelshift';
 export const MIGRATIONS_DIR = 'migrations';
@@ -37,8 +45,8 @@ export function recoveryPath(root: string): string {
   return join(root, STATE_DIR, RECOVERY_FILE);
 }
 
-/** Every migration id present on disk, oldest first. */
-export function listMigrations(root: string): readonly MigrationId[] {
+/** Every ledger FILE on disk, oldest first, whether or not it holds a migration. */
+function ledgerFileIds(root: string): readonly MigrationId[] {
   const dir = migrationsDir(root);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -47,11 +55,34 @@ export function listMigrations(root: string): readonly MigrationId[] {
     .sort();
 }
 
+/** True for a ledger file that exists but holds no record at all. */
+function isEmptyLedgerFile(root: string, id: MigrationId): boolean {
+  const path = migrationPath(root, id);
+  if (!existsSync(path)) return true;
+  return readFileSync(path, 'utf8').trim().length === 0;
+}
+
+/**
+ * Every migration present on disk, oldest first.
+ *
+ * A zero-byte ledger file is NOT a migration. It contains no `register` record, so there is
+ * nothing it could be a migration TO. Registration is atomic now, so one can only appear
+ * through outside interference or an interruption in an older version, but treating it as a
+ * migration is what wedged a project: it looked active, nothing could be done to it, and no
+ * new migration could begin.
+ */
+export function listMigrations(root: string): readonly MigrationId[] {
+  return ledgerFileIds(root).filter((id) => !isEmptyLedgerFile(root, id));
+}
+
 export function nextMigrationId(root: string): MigrationId {
-  const all = listMigrations(root);
+  const all = ledgerFileIds(root);
   const last = all.at(-1);
-  const n = last === undefined ? 0 : Number.parseInt(last, 10);
-  return String(n + 1).padStart(4, '0');
+  if (last === undefined) return '0001';
+  // An empty trailing file holds no record, so its id is reclaimed rather than being
+  // skipped forever. Ids are only ever consumed by migrations that actually exist.
+  if (isEmptyLedgerFile(root, last)) return last;
+  return String(Number.parseInt(last, 10) + 1).padStart(4, '0');
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -147,6 +178,10 @@ export function readMigration(root: string, id: MigrationId): readonly Migration
     });
   }
 
+  // 4. CROSS-EVENT. Every record above is individually possible; this asks whether they are
+  // possible TOGETHER, and in particular whether they all describe the same migration.
+  assertCrossEventConsistency(events, path);
+
   return events;
 }
 
@@ -156,15 +191,45 @@ export function activeMigrationId(root: string): MigrationId | null {
   const last = all.at(-1);
   if (last === undefined) return null;
   const state = foldState(readMigration(root, last));
-  if (state === null) return last;
+  // DELIBERATELY REDUNDANT. `listMigrations` already excludes ledgers with no records, so
+  // this branch is unreachable today and a mutation that removes it survives; that is
+  // documented in docs/mutation-testing.md rather than papered over.
+  //
+  // It stays because the two mistakes here are not symmetric. Reading "no state" as "in
+  // progress" is what let an interrupted creation block every subsequent registration in a
+  // project, and the cost of the opposite mistake is only that a new migration may begin.
+  if (state === null) return null;
   return TERMINAL_STATES.includes(state) ? null : last;
 }
 
-/** Append one event to a migration. The only write path into a ledger. */
+/**
+ * Append one event to a migration. The only write path into a ledger.
+ *
+ * THE FIRST RECORD CREATES THE FILE, ATOMICALLY. Writing it into a temporary file and
+ * renaming it into place means a migration file never exists in a half-formed state: either
+ * there is no file, or there is a file whose first record is a complete `register`. The
+ * earlier two-step (create empty, then append) had an observable window between them, and an
+ * interruption inside that window left a file that looked like an active migration, refused
+ * every action, and could not be registered over.
+ */
 export function appendEvent(root: string, id: MigrationId, event: MigrationEvent): void {
   const path = migrationPath(root, id);
   mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify(event)}\n`, 'utf8');
+  const serialised = `${JSON.stringify(event)}\n`;
+
+  if (event.seq !== 1) {
+    appendFileSync(path, serialised, 'utf8');
+    return;
+  }
+
+  if (existsSync(path) && readFileSync(path, 'utf8').trim().length > 0) {
+    throw new Error(`migration ${id} already holds records at ${path}; refusing to overwrite it`);
+  }
+  // The pid keeps two processes racing on the same id from sharing a temporary file. The
+  // rename is what makes the result atomic; the temporary name never survives it.
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, serialised, 'utf8');
+  renameSync(tmp, path);
 }
 
 /**
@@ -200,15 +265,4 @@ export function initStore(root: string): { created: boolean; path: string } {
 
 export function storeExists(root: string): boolean {
   return existsSync(migrationsDir(root));
-}
-
-/** Atomically create an empty ledger file for a new migration id. */
-export function createMigrationFile(root: string, id: MigrationId): string {
-  const path = migrationPath(root, id);
-  mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path)) throw new Error(`migration ${id} already exists at ${path}`);
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, '', 'utf8');
-  renameSync(tmp, path);
-  return path;
 }

@@ -9,7 +9,7 @@ import { TRANSITIONS, nextState, foldState, statesPermitting } from '../src/doma
 import { IllegalTransitionError, ConfigError, VerificationBoundsError } from '../src/domain/errors.ts';
 import { parseConfig, policyHash, DEFAULT_CONFIG } from '../src/config.ts';
 import { evaluateAcceptance } from '../src/policy/acceptance.ts';
-import { runBoundedVerification, assertServingModel } from '../src/verify/index.ts';
+import { runBoundedVerification, assertServingModelInWindow } from '../src/verify/index.ts';
 import { demoBaseline, exactMatchEvaluator } from '../src/adapters/local/index.ts';
 import type { ComparativeEvaluation } from '../src/domain/types.ts';
 
@@ -219,12 +219,12 @@ describe('telemetry assertion', () => {
   const src = (rows: { requestId: string; servedBy: string }[]) => ({ name: 't', observations: () => rows });
 
   test('confirms only when every observation is the expected model', async () => {
-    const a = await assertServingModel(src([{ requestId: '1', servedBy: 'm' }, { requestId: '2', servedBy: 'm' }]), 'm', bounds);
+    const a = await assertServingModelInWindow(src([{ requestId: '1', servedBy: 'm' }, { requestId: '2', servedBy: 'm' }]), 'm', bounds);
     assert.equal(a.confirmed, true);
   });
 
   test('an empty set is not confirmation', async () => {
-    const a = await assertServingModel(src([]), 'm', bounds);
+    const a = await assertServingModelInWindow(src([]), 'm', bounds);
     assert.equal(a.confirmed, false);
     assert.equal(a.observationCount, 0);
   });
@@ -240,9 +240,9 @@ describe('telemetry assertion', () => {
       const i = rows.findIndex((r) => r.requestId === since);
       return i === -1 ? rows : rows.slice(i + 1);
     } };
-    const unscoped = await assertServingModel(scoped, 'm', bounds, null);
+    const unscoped = await assertServingModelInWindow(scoped, 'm', bounds, null);
     assert.equal(unscoped.confirmed, false, 'stale observations must not be counted');
-    const marked = await assertServingModel(scoped, 'm', bounds, 'old');
+    const marked = await assertServingModelInWindow(scoped, 'm', bounds, 'old');
     assert.equal(marked.confirmed, true);
   });
 });

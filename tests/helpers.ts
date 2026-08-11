@@ -3,7 +3,7 @@
 // Every test gets its own temporary root and removes it in afterEach. A single after()
 // hook would only ever see the LAST root and leak every earlier one.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_CONFIG, writeConfig, loadConfig, type ModelshiftConfig } from '../src/config.ts';
@@ -48,6 +48,58 @@ export function portsFor(root: string, baseline = 'demo-baseline'): Ports {
 /** An activation target whose write() silently does nothing. The common real failure. */
 export function noopActivationTarget(reports: ModelId) {
   return { name: 'noop-target', read: () => reports, write: () => {} };
+}
+
+/**
+ * A working in-memory activation target.
+ *
+ * Used where a test needs to observe activation without the demo's file target. It genuinely
+ * changes what `read()` reports, which activation now depends on twice: the pre-flight
+ * baseline check reads it BEFORE the write, and the confirmation reads it after.
+ */
+export function statefulActivationTarget(initial: ModelId, name = 'stateful-target', onWrite: (m: ModelId) => void = () => {}) {
+  let serving = initial;
+  return {
+    name,
+    read: (): ModelId => serving,
+    write: (model: ModelId): void => {
+      onWrite(model);
+      serving = model;
+    },
+  };
+}
+
+/**
+ * Rewrite matching records of a ledger in place, preserving everything else byte for byte.
+ *
+ * The point of every tampering test is that only ONE field changes. Anything that also
+ * disturbs the sequence or the chain would be caught by an older layer, and would prove
+ * nothing about the layer under test.
+ */
+export function editLedger(
+  path: string,
+  match: (e: Record<string, unknown>) => boolean,
+  mutate: (e: Record<string, unknown>) => Record<string, unknown>,
+): number {
+  const lines = readFileSync(path, 'utf8').trim().split('\n');
+  let edited = 0;
+  const rewritten = lines.map((l) => {
+    const e = JSON.parse(l) as Record<string, unknown>;
+    if (!match(e)) return l;
+    edited += 1;
+    return JSON.stringify(mutate(e));
+  });
+  writeFileSync(path, `${rewritten.join('\n')}\n`, 'utf8');
+  return edited;
+}
+
+/** Edit one detail field of the first matching record. Returns how many records changed. */
+export function editDetail(path: string, action: string, key: string, value: unknown): number {
+  return editLedger(
+    path,
+    (e) => e['action'] === action,
+    (e) => ({ ...e, detail: { ...(e['detail'] as Record<string, unknown>), [key]: value } }),
+  );
 }
 
 export type Stage = 'REGISTERED' | 'EVALUATED' | 'ACCEPTED' | 'APPROVED' | 'ACTIVATED' | 'VERIFIED';

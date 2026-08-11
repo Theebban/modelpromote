@@ -175,6 +175,7 @@ async function main(argv: readonly string[]): Promise<number> {
     out(`state      : ${v.state ?? '(no migration)'}`);
     out(`candidate  : ${v.candidate ?? '(none)'}`);
     out(`baseline   : ${v.baseline ?? '(none)'}`);
+    out(`rollback to: ${v.rollbackTarget ?? '(none)'} (locked at register)`);
     out(`events     : ${v.events.length}`);
     if (v.evaluation) out(`evaluation : delta ${v.evaluation.delta >= 0 ? '+' : ''}${v.evaluation.delta.toFixed(3)}`);
     if (v.governingPolicyHash) out(`policy     : ${v.governingPolicyHash} (governing this evidence)`);
@@ -251,6 +252,8 @@ async function main(argv: readonly string[]): Promise<number> {
     out(`  observed      : ${assertion.observed.join(', ') || '(none)'}`);
     out(`  observations  : ${assertion.observationCount} (minimum ${assertion.required})`);
     out(`  confirmed     : ${assertion.confirmed ? 'YES' : 'NO'}`);
+    out(`  evidence class: ${assertion.evidenceClass} (all traffic observed after the mark,`);
+    out('                  NOT a per-request correlation with the calls issued above)');
     out(`  reason        : ${assertion.reason}`);
     out('');
     out(assertion.confirmed ? 'Next: modelshift close --actor <your-name>' : 'Verification failed. Next: modelshift rollback --actor <your-name>');
@@ -291,9 +294,17 @@ async function main(argv: readonly string[]): Promise<number> {
     try {
       const r = await rollback(root, actor, config, loaded.ports);
       out(`rolled back by ${actor}`);
+      out(`  rollback target : ${r.target}  (locked when this migration began)`);
       out(`  target read back: ${r.observed}`);
       out(`  confirmed       : YES`);
       out('  reversion path  : configuration change, not a code release.');
+      if (r.configDrift) {
+        out('');
+        out(`  *** CONFIG DRIFT: ${CONFIG_FILE} now names "${r.configuredTarget}" as rollbackModel.`);
+        out(`      The LOCKED target "${r.target}" was used, because a safe target that a later`);
+        out('      config edit can redirect is not a safe target. Reconcile the configuration');
+        out('      before the next migration; this one is recorded with both values.');
+      }
       return 0;
     } catch (e) {
       // FAIL OPEN. An unreadable ledger must not stand between an operator and the declared
@@ -302,6 +313,8 @@ async function main(argv: readonly string[]): Promise<number> {
       const r = await emergencyRollback(root, actor, config, loaded.ports, e.message.split('\n')[0] ?? 'ledger unreadable');
       out('EMERGENCY ROLLBACK');
       out('  the migration ledger is unreadable, so the normal path could not run.');
+      out(`  target authority: ${CONFIG_FILE} (rollbackModel), NOT the ledger-locked target,`);
+      out('                    which cannot be read from a ledger that failed its checks.');
       out(`  rollback target : ${r.target}`);
       out(`  target read back: ${r.observed}`);
       out(`  confirmed       : YES, by read-back`);

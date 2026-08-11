@@ -8,7 +8,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 
-import { makeRoot, removeRoot, portsFor, fixedClock, driveTo, noopActivationTarget } from './helpers.ts';
+import { makeRoot, removeRoot, portsFor, fixedClock, driveTo, noopActivationTarget, statefulActivationTarget } from './helpers.ts';
 import { loadConfig, writeConfig, DEFAULT_CONFIG } from '../src/config.ts';
 import {
   ActivationNotConfirmedError,
@@ -291,16 +291,15 @@ describe('invariant 11: activation requires positive read-back', () => {
   test('the intent is recorded before the external write', async () => {
     const { ports } = await driveTo(root, 'APPROVED');
     let stateWhenWriteHappened: string | null = null;
+    // Genuinely stateful, because activation reads the target twice for different reasons:
+    // once before the write to confirm production is still on the baseline, and once after
+    // to confirm the change took.
     const observing = {
       ...ports,
-      activation: {
-        name: 'observing',
-        read: () => 'demo-candidate',
-        write: () => {
-          // Whatever the ledger says at THIS moment is what a crash here would leave behind.
-          stateWhenWriteHappened = status(root).state;
-        },
-      },
+      activation: statefulActivationTarget('demo-baseline', 'observing', () => {
+        // Whatever the ledger says at THIS moment is what a crash here would leave behind.
+        stateWhenWriteHappened = status(root).state;
+      }),
     };
     await activate(root, 'tester', observing);
     assert.equal(stateWhenWriteHappened, 'ACTIVATING', 'a crash mid-activation must leave ACTIVATING, never APPROVED');
@@ -482,11 +481,17 @@ describe('invariant 13: a project may run many migrations, and keeps all of them
   });
 
   // Verification scopes telemetry to "after the last observation seen before this run". If
-  // request ids repeat between runs, that marker matches an OLD row and the scope silently
-  // widens to include a previous migration's traffic, failing a healthy system.
+  // observation ids repeat between runs, that marker matches an OLD row and the scope
+  // silently widens to include a previous migration's traffic, failing a healthy system.
+  //
+  // The first migration is rolled back rather than closed, so production returns to the
+  // baseline the second migration declares. Closing it instead would leave the candidate
+  // serving while config still named the old baseline, which activation now refuses.
   test('a SECOND migration verifies successfully, with telemetry scoped to its own run', async () => {
     const { config, ports, clock } = await driveTo(root, 'VERIFIED');
-    stabilise(root, 'tester', clock);
+    await rollback(root, 'tester', config, ports);
+    assert.equal(status(root).state, 'ROLLED_BACK');
+    assert.equal(await ports.activation.read(), config.baselineModel);
 
     register(root, 'demo-candidate', config, clock);
     await evaluate(root, DEMO_CASES, config, ports);

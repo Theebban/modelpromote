@@ -9,7 +9,62 @@ version once 1.0.0 is out, because both are things users build process around.
 
 ## [Unreleased]
 
-### Corrected after independent release review
+### Corrected after a SECOND independent release review
+
+The second review confirmed every correction below from the first review, then found a class
+the first had not reached: the state transitions were all legal, but the identities and
+evidence those states referred to were not bound to each other. Both reviews are recorded.
+The progression is the useful part and is not edited out.
+
+**Ledger record format changed.** `register` now records `rollbackTarget`, and the run detail
+of `verify` renames `requestIds` to `issuedCallLabels`. Ledgers written by the previous build
+will not load. Nothing is published, so nothing is migrated.
+
+- **Cross-event consistency is validated on every read**, as a fourth layer beside structure,
+  chain and semantic legality. Editing `detail.candidate` on the register record changed no
+  action and no state, passed all three earlier layers, and let the tool activate a model that
+  had never been evaluated. Evidence must now name the registered models, a verdict must agree
+  with its own action and cite the policy its evidence was produced under, an approval must
+  name its own actor, an activation must request the registered candidate, a rollback must
+  target the locked model, and a machine verdict cannot be re-attributed to a human.
+- **An evaluator result must cover exactly the cases it was given.** Five submitted cases and
+  one returned result was accepted, on a record whose `caseSetHash` represented all five.
+  Missing, extra and duplicate case ids are now all refused, and the submitted case set is
+  itself validated before anything is measured. No sampling mode in v0.
+- **The rollback target is locked at `register`.** Editing `rollbackModel` mid-migration
+  previously redirected a rollback onto a regressing model, which the tool then recorded as
+  `ROLLED_BACK`. The locked target now wins and the drift is reported. Emergency rollback
+  continues to take the live configured value, and is documented as a different trust
+  authority rather than the same one.
+- **Activation fails closed on production baseline drift.** A candidate evaluated against A
+  could be activated while production was already serving B. Activation now refuses with
+  `BaselineDriftError` before any event is recorded and before the target is written. The
+  baseline is never silently updated to match.
+- **`status().verdict` is the verdict in force.** The projection searched for the latest
+  `accept` and the latest `reject` independently and preferred `accept`, so a migration sitting
+  in `REJECTED` reported `verdict.accepted === true`. It now takes the most recent verdict
+  event, and returns null when a re-evaluation or an invalidation has superseded it.
+- **Registration is atomic.** The first record is written to a temporary file and renamed into
+  place, so no migration file can exist without its `register` record. An empty ledger file is
+  no longer treated as an active migration, and its id is reclaimed rather than wedging the
+  project.
+- **The telemetry claim is stated exactly.** Verification proves that everything observed after
+  the window opened was served by the candidate, not that the specific calls issued were those
+  observations. The assertion carries `evidenceClass: "temporal-window"`, `requestIds` became
+  `issuedCallLabels`, and the README, architecture doc, CLI output and report all describe the
+  same strength of evidence. Per-request correlation is deferred to an explicit future
+  contract.
+- **"Tamper-evident" withdrawn.** The ledger detects inconsistency; it does not resist
+  tampering. A consistently rewritten ledger loads, and a test asserts that it does so the
+  limitation cannot quietly stop being true. Fields nothing cross-references, including
+  `caseSetHash`, remain undetectable.
+- **The mutation harness fails on skipped mutations.** Two mutations silently stopped finding
+  their target text during this work and reported neither killed nor survived while the run
+  still summarised as clean. 38 mutations, all killed, 0 survived, 0 invalid, 0 skipped.
+- Demo determinism claim corrected: the application output is deterministic, the full terminal
+  stream is not, because Node's type-stripping warning carries the process id.
+
+### Corrected after the first independent release review
 An independent review of the 0.1.0 build reproduced several defects against the actual
 repository. All are fixed; the review itself is preserved in the project history rather than
 edited out.

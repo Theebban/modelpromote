@@ -81,6 +81,11 @@ ms approve --actor you                                    # before evaluate
 ms activate --actor you                                   # before approve
 ms approve --actor "you\n     approved by   compliance"   # forged audit line
 echo '}}}' >> /tmp/demo/.modelshift/migrations/0001.jsonl && ms status
+
+# Substitute the candidate in the first ledger record, changing no state at all,
+# then ask what the migration is about. It refuses to load.
+sed -i '' '1s/demo-candidate/demo-regression/' /tmp/demo/.modelshift/migrations/0001.jsonl
+ms status
 ```
 
 ## 4. The migration lifecycle
@@ -131,7 +136,7 @@ Run `modelshift states` for the full table.
 | `verify` | Bounded traffic, then assert the serving model from telemetry |
 | `close --actor <name>` | Close the migration. State becomes `STABLE` |
 | `abandon --actor <name>` | Give up on a candidate, before anything is activated |
-| `rollback --actor <name>` | Revert to the configured rollback model |
+| `rollback --actor <name>` | Revert to the target locked when the migration began |
 | `report` | The full audit record |
 | `history` | Every migration in this project |
 | `states` | Print the transition table |
@@ -163,15 +168,41 @@ The same operations are a library: `import { register, evaluate, approve, activa
 push its own demo fixtures through your adapters, because that traffic reaches your real
 system. With neither present, verification **fails closed** with an actionable error.
 
+**`baselineModel` and `rollbackModel` are read once, at `register`, and locked into the
+migration.** Editing them afterwards does not retarget a migration already in flight:
+
+- `baselineModel` is what the candidate is measured against, and it is **enforced** at
+  activation. If the activation target reports something else by the time you activate, the
+  migration refuses rather than promoting a candidate whose evidence describes a different
+  starting point. The baseline is never silently updated to match production.
+- `rollbackModel` is locked as the migration's rollback target. A later edit cannot redirect
+  a rollback; the drift is reported and the locked target is used. The live config value
+  remains the authority for **emergency** rollback only, which runs when the ledger is
+  unreadable and therefore cannot consult the lock.
+
+After a migration closes as `STABLE`, the candidate is your new baseline in fact. Update
+`baselineModel` to match, or the next migration's activation will refuse with a
+`BaselineDriftError` naming both models.
+
 ## 7. State-machine semantics
 
 - **The ledger is the state.** `.modelshift/migrations/NNNN.jsonl` is append-only, and current
   state is a fold over it. No separate state field can drift from the record.
-- **Reads are strict in three independent ways**: sequence continuity, `from`/`to` chain
-  continuity, and **semantic legality**, meaning every `(action, from, to)` triple must be one
-  the transition table could have produced. The third matters because the first two are
-  satisfiable by a forgery: editing one field of a valid record can invent a migration that
-  skipped evaluation entirely.
+- **Reads are strict in four independent ways**: record structure, `from`/`to` chain
+  continuity, **semantic legality** (every `(action, from, to)` triple must be one the
+  transition table could have produced), and **cross-event consistency** (every record must
+  refer to the same migration). Each layer exists because the ones before it were shown to be
+  satisfiable by a forgery. Layer 3 was added after a one-field edit invented a migration that
+  skipped evaluation; layer 4 after a one-field edit substituted the *candidate model* without
+  touching a single state, so the tool activated a model nothing had ever evaluated.
+- **What layer 4 checks.** Evidence must name the registered candidate and baseline; a verdict
+  must agree with its own action and cite the policy the evidence was produced under; an
+  approval must name its own actor; an activation must request the registered candidate and
+  report an outcome consistent with what was read back; a rollback must target the locked
+  model; a machine verdict cannot be re-attributed to a human.
+- **Registration is atomic.** The first record is written to a temporary file and renamed into
+  place, so a migration file never exists without its `register` record. A zero-byte ledger
+  file is not treated as a migration, and cannot block a project from registering a new one.
 - **A corrupt ledger never degrades into a default.** Forward motion stops; `rollback` detects
   it and falls back to an emergency path that takes its target from configuration, records to a
   separate `recovery.jsonl`, and leaves the corrupt file untouched for investigation.
@@ -183,6 +214,8 @@ system. With neither present, verification **fails closed** with an actionable e
 - **Activation and rollback are two-phase.** The intent is recorded *before* the external write,
   so an interruption leaves `ACTIVATING` (something may be live, nothing confirmed) rather than
   a state that claims safety. The outcome is recorded from what the target **read back**.
+- **Activation fails closed on baseline drift.** Before anything is recorded or written, the
+  serving model must be the baseline this migration measured against.
 
 ## 8. Adapters
 
@@ -204,14 +237,17 @@ Drop a `modelshift.ports.ts` (or `.js` when installed) beside your config export
 
 **Evidence crossing the `Evaluator` boundary is validated** before it can produce an
 acceptance: the result must describe the adapter that was evaluated, the score must be finite
-and in range, counts must be coherent, and duplicate or unsubmitted case ids are rejected. This
-is not an evaluation framework; it makes no judgement about whether a score is *good*, only
-about whether it is *coherent*.
+and in range, and counts must be coherent. Coverage must be **exact**: one result per
+submitted case, no missing case, no extra case, no duplicate. Partial coverage is refused
+rather than recorded as if the whole case set had been measured, because the resulting record
+is indistinguishable from a complete one. There is no sampling mode in v0. This is not an
+evaluation framework; it makes no judgement about whether a score is *good*, only about
+whether it is *coherent* and *complete*.
 
 ## 9. Safety invariants
 
 Each is enforced in code and covered by a test that **fails when the implementation is
-deliberately broken** (`docs/mutation-testing.md`, 19 mutations, all killed).
+deliberately broken** (`docs/mutation-testing.md`, 38 mutations, all killed).
 
 1. An unevaluated candidate cannot be approved.
 2. A candidate that failed the policy cannot be approved.
@@ -220,13 +256,21 @@ deliberately broken** (`docs/mutation-testing.md`, 19 mutations, all killed).
 5. Verification cannot exceed its configured ceiling.
 6. An empty telemetry set never confirms activation.
 7. A mismatched serving model cannot produce `VERIFIED`.
-8. Rollback targets the declared safe model, and `ROLLED_BACK` requires read-back.
+8. Rollback targets the model locked at `register`, and `ROLLED_BACK` requires read-back.
 9. Audit records cannot claim a transition that did not occur.
 10. Re-running `status` does not mutate state.
-11. **`ACTIVATED` requires a positive read-back from the activation target.**
-12. **A policy change invalidates the evidence it governed.**
-13. **A hand-edited ledger cannot invent a legal-looking transition.**
-14. **An identifier cannot forge a line of the audit report.**
+11. `ACTIVATED` requires a positive read-back from the activation target.
+12. A policy change invalidates the evidence it governed.
+13. A hand-edited ledger cannot invent a legal-looking transition.
+14. An identifier cannot forge a line of the audit report.
+15. **An evaluator result must cover exactly the cases it was given.**
+16. **Every record in a ledger must refer to the same migration**: the candidate, baseline,
+    policy, evidence, approver and rollback target cannot be swapped independently.
+17. **A configuration edit cannot redirect a rollback** away from the locked target.
+18. **Activation is refused when production is not serving the evaluated baseline**, before
+    any event is recorded and before the activation target is touched.
+19. **`status().verdict` is the verdict in force**, never a superseded one.
+20. **An interrupted registration cannot wedge a project.**
 
 ## 10. Limitations
 
@@ -240,10 +284,26 @@ deliberately broken** (`docs/mutation-testing.md`, 19 mutations, all killed).
   one rather than replace it.
 - **The bundled evaluator is exact-match**, deliberately the weakest useful metric.
 - **The bundled adapters are local stand-ins.** No provider integration ships in v0.
-- **The ledger is a local file** and is tamper-**evident**, not tamper-**resistant**. Anyone who
-  can write it can rewrite it consistently. A hash-chained or signed ledger is on the roadmap.
+- **Verification proves a temporal claim, not a per-request one.** A confirmation means *every
+  observation your telemetry recorded after the window opened named the candidate*, with at
+  least `minObservations` of them. It does **not** mean *these exact verification calls were
+  served by the candidate*: modelshift does not propagate a correlation id through your
+  adapter, so unrelated traffic in the same window counts toward the claim. Every place this
+  is reported says so, and the recorded assertion carries `evidenceClass: "temporal-window"`.
+- **The ledger detects inconsistency, not tampering.** The four read-time layers catch
+  malformed records, broken sequence, a broken `from`/`to` chain, illegal transitions and
+  cross-event identity or evidence contradictions. They do **not** provide tamper resistance:
+  there is no hash chain and no signature, so a ledger rewritten *consistently* throughout
+  loads cleanly, and fields nothing else cross-references (timestamps, free-text reasons,
+  adapter labels, the case-set hash) can be altered undetected. The case set itself is not
+  retained in the ledger, so `caseSetHash` cannot be re-derived on read; it is a claim you can
+  check only against a case file you still hold. A signed or hash-chained ledger is the honest
+  fix and is on the roadmap.
 - **No authentication.** `--actor` is an assertion, not an identity.
 - **Node 22.6+** for the source workflow. The published package is plain JavaScript.
+- **The demo transcript is not byte-identical across runs.** The application output is
+  deterministic (fixed clock, no randomness), but Node's experimental type-stripping warning
+  includes a changing process id, so the full stream differs.
 
 ## 11. Roadmap
 
@@ -254,6 +314,9 @@ Integration first. The point is to be the governance layer over tools you alread
 - Gateway and feature-flag activation targets
 - Progressive activation under the same gates
 - A hash-chained or signed ledger for tamper resistance
+- An explicit correlation contract, so verification can prove a per-request claim instead of
+  a temporal one, without inventing an id the adapters cannot carry
+- An explicit partial-coverage contract, in which a measured subset is represented as a subset
 - Machine-readable report output for CI and evidence pipelines
 
 ## Install and build
@@ -262,7 +325,7 @@ Integration first. The point is to be the governance layer over tools you alread
 npm install        # devDependencies only: TypeScript and ESLint
 npm run build      # emit plain JavaScript to dist/
 npm run check      # typecheck, lint, tests
-npm run mutate     # prove each safety gate fails when broken
+npm run mutate     # prove each safety gate fails when broken (38 mutations)
 npm run smoke:package   # build, pack, install the tarball, run the installed CLI
 ```
 
