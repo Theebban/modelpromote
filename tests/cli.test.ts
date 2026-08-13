@@ -22,7 +22,7 @@ const ENTRY = join(REPO, 'src', 'cli', 'index.ts');
 
 let root: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'modelshift-cli-'));
+  root = mkdtempSync(join(tmpdir(), 'modelpromote-cli-'));
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
@@ -75,7 +75,7 @@ describe('the command may appear after its options', () => {
     for (const args of [['--root', root, 'register'], ['register', '--root', root]]) {
       const r = cli(...args);
       assert.equal(r.code, 2, r.out);
-      assert.match(r.out, /usage: modelshift register/);
+      assert.match(r.out, /usage: modelpromote register/);
     }
   });
 
@@ -135,7 +135,7 @@ describe('the documented five-minute walkthrough, end to end', () => {
     assert.equal(ms('evaluate').code, 0);
 
     // README section 3: substitute the candidate in the first record, change nothing else.
-    const ledger = join(root, '.modelshift', 'migrations', '0001.jsonl');
+    const ledger = join(root, '.modelpromote', 'migrations', '0001.jsonl');
     const lines = readFileSync(ledger, 'utf8').trim().split('\n');
     const first = JSON.parse(lines[0] as string) as { detail: Record<string, unknown> };
     first.detail['candidate'] = 'demo-regression';
@@ -155,7 +155,7 @@ describe('the documented five-minute walkthrough, end to end', () => {
     ms('init');
     ms('register', 'demo-candidate');
 
-    const ledger = join(root, '.modelshift', 'migrations', '0001.jsonl');
+    const ledger = join(root, '.modelpromote', 'migrations', '0001.jsonl');
     const lines = readFileSync(ledger, 'utf8').trim().split('\n');
     const first = JSON.parse(lines[0] as string) as { detail: Record<string, unknown> };
     first.detail['candidate'] = 'demo-regression';

@@ -58,7 +58,7 @@ export class PolicyViolationError extends Error {
 
 export class ConfigError extends Error {
   constructor(message: string) {
-    super(`Invalid modelshift configuration: ${message}`);
+    super(`Invalid modelpromote configuration: ${message}`);
     this.name = 'ConfigError';
   }
 }
@@ -67,7 +67,7 @@ export class NoMigrationError extends Error {
   constructor(path: string) {
     super(
       `No migration found at ${path}.\n` +
-        '  Run "modelshift init" then "modelshift register <candidate>" to start one.',
+        '  Run "modelpromote init" then "modelpromote register <candidate>" to start one.',
     );
     this.name = 'NoMigrationError';
   }
@@ -170,7 +170,7 @@ export class StalePolicyEvidenceError extends Error {
         `  policy in force when evaluated : ${governingHash}\n` +
         `  policy in force now            : ${currentHash}\n` +
         '  The verdict on record was earned under different rules, so it no longer applies.\n' +
-        '  Re-run "modelshift evaluate" to produce evidence under the current policy.',
+        '  Re-run "modelpromote evaluate" to produce evidence under the current policy.',
     );
     this.name = 'StalePolicyEvidenceError';
     this.governingHash = governingHash;
@@ -198,10 +198,10 @@ export class NoVerificationPlanError extends Error {
   constructor(source: string) {
     super(
       `No verification inputs are available, and ports came from ${source}.\n` +
-        '  modelshift will not send its built-in demo fixtures through your adapters.\n' +
+        '  modelpromote will not send its built-in demo fixtures through your adapters.\n' +
         '  Supply one of:\n' +
-        '    - a "verificationInputs" array in modelshift.config.json, or\n' +
-        '    - a "verificationPlan()" export from modelshift.ports.ts returning string[].\n' +
+        '    - a "verificationInputs" array in modelpromote.config.json, or\n' +
+        '    - a "verificationPlan()" export from modelpromote.ports.ts returning string[].\n' +
         '  Verification traffic reaches your real system, so it must be traffic you chose.',
     );
     this.name = 'NoVerificationPlanError';

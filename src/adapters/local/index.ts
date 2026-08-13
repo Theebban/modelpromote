@@ -63,7 +63,7 @@ export const demoRegression: ModelAdapter = {
  * Reference evaluator: exact match after normalisation.
  *
  * Deliberately the weakest useful metric. Evaluation quality is a competitive, well-served
- * space and modelshift is not competing in it. Swap this port for Promptfoo, DeepEval or
+ * space and modelpromote is not competing in it. Swap this port for Promptfoo, DeepEval or
  * your own judge and nothing else in the lifecycle changes.
  */
 export const exactMatchEvaluator: Evaluator = {

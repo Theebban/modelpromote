@@ -9,14 +9,14 @@
 // Everything else must say what to send, and if it has not, verification FAILS CLOSED.
 
 import { NoVerificationPlanError } from '../domain/errors.ts';
-import type { ModelshiftConfig } from '../config.ts';
+import type { ModelPromoteConfig } from '../config.ts';
 import type { Ports } from '../ports/index.ts';
 
 export interface ResolvedPorts {
   readonly ports: Ports;
   /** Human-readable origin of the wiring, used in errors and in the audit trail. */
   readonly source: string;
-  /** True when the wiring came from the project's own `modelshift.ports` file. */
+  /** True when the wiring came from the project's own `modelpromote.ports` file. */
   readonly custom: boolean;
 }
 
@@ -36,7 +36,7 @@ export interface ResolvedInputs {
  * cannot reach the fixtures on its own.
  */
 export async function resolveVerificationInputs(
-  config: ModelshiftConfig,
+  config: ModelPromoteConfig,
   loaded: ResolvedPorts,
   demoFixtures: () => Promise<readonly string[]> | readonly string[],
 ): Promise<ResolvedInputs> {

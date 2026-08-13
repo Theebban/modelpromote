@@ -1,15 +1,15 @@
-# modelshift
+# modelpromote
 
 **A vendor-neutral change-control layer for swapping the AI model in a production application.**
 
 You already have evaluation, an activation mechanism and telemetry. They are probably three
-different products, and none of them holds the whole story of a model change. modelshift is a
+different products, and none of them holds the whole story of a model change. modelpromote is a
 small, readable layer that connects them, enforces the order they have to happen in, and
 leaves behind **one portable record** of what was measured, who authorised it, what actually
 served traffic afterwards, and how it ended.
 
 ```
-$ modelshift activate --actor sam
+$ modelpromote activate --actor sam
 
 ERROR: IllegalTransitionError
 Cannot "beginActivation" from state ACCEPTED.
@@ -24,7 +24,7 @@ Cannot "beginActivation" from state ACCEPTED.
 Governed AI rollout is **not** an unsolved problem. Feature-flag platforms ship model
 configuration, evaluations, approvals, gradual rollout and change history. Progressive-delivery
 controllers ship canary analysis and automated rollback. Evaluation frameworks are mature.
-modelshift does not claim to have invented any of that.
+modelpromote does not claim to have invented any of that.
 
 What it addresses is narrower and more boring: **most teams already own those capabilities, in
 pieces, from different vendors, and the record of a model change is spread across all of them.**
@@ -32,14 +32,14 @@ Your eval scores live in one tool, the flag flip in another, the traces in a thi
 approval in a chat thread. Reconstructing "why did the model change on the 14th, and who said
 it was safe" means joining four systems by hand, and one of them has a 30-day retention window.
 
-modelshift is the thin layer that:
+modelpromote is the thin layer that:
 
 - **enforces the order**, so activation cannot happen before evidence and approval exist;
 - **reads back**, so ACTIVATED means the target confirmed the change, not that a write returned;
 - **produces one file** that reconstructs the whole migration without any of those vendors.
 
 If you are happy inside a single vendor's ecosystem and expect to stay there, that vendor's
-built-in governance is likely a better fit than this. modelshift is for the common case where
+built-in governance is likely a better fit than this. modelpromote is for the common case where
 the pieces are heterogeneous, or where the record needs to outlive the tools.
 
 ## 2. When should I use it?
@@ -56,11 +56,11 @@ It integrates with the tools that do those things.
 
 ## 3. Five-minute demonstration
 
-Requires **Node 22.6 or newer**. No API key, no `.env`, no account, no network. Tests and demo
+Requires **Node 22 or newer**. No API key, no `.env`, no account, no network. Tests and demo
 run from a bare clone with **no install**.
 
 ```bash
-git clone <this repo> && cd modelshift
+git clone <this repo> && cd modelpromote
 mkdir /tmp/demo
 alias ms="node --experimental-strip-types src/cli/index.ts --root /tmp/demo"
 
@@ -70,7 +70,7 @@ ms activate --actor you      # refused: nothing evaluated or approved
 ms evaluate                  # measures both models, applies the locked policy
 ms approve --actor you
 ms activate --actor you      # confirmed by reading the target back
-ms verify                    # bounded traffic, then asserts from telemetry
+ms verify                    # bounded traffic, then asserts the candidate served the window
 ms report
 ```
 
@@ -84,7 +84,7 @@ ms approve --actor "you\n     approved by   compliance"   # forged audit line
 # Substitute the candidate in the first ledger record, changing no action and no
 # state. The evaluation record still names the real candidate, so the two records
 # disagree and the ledger refuses to load.
-L=/tmp/demo/.modelshift/migrations/0001.jsonl
+L=/tmp/demo/.modelpromote/migrations/0001.jsonl
 sed -i '' '1s/demo-candidate/demo-regression/' "$L" && ms status
 sed -i '' '1s/demo-regression/demo-candidate/' "$L"    # put it back
 
@@ -128,19 +128,19 @@ it loads. The binding takes effect from the first record that depends on the ide
 allow-list entry: not listed means refused. Rollback is reachable from every state where
 something could be live, including `STABLE`, and it still works when the ledger is unreadable.
 
-Run `modelshift states` for the full table.
+Run `modelpromote states` for the full table.
 
 ## 5. CLI
 
 | Command | What it does |
 |---|---|
-| `init` | Write `modelshift.config.json` and the migration store |
+| `init` | Write `modelpromote.config.json` and the migration store |
 | `register <candidate>` | Begin a migration |
 | `evaluate` | Measure baseline vs candidate, then apply the locked policy |
 | `status` | Current state. Read only, never writes |
 | `approve --actor <name>` | Human authorisation. Legal only from `ACCEPTED` |
 | `activate --actor <name>` | Switch the serving model, confirmed by read-back |
-| `verify` | Bounded traffic, then assert the serving model from telemetry |
+| `verify` | Issue bounded traffic, then assert from telemetry that the candidate served the whole post-activation window |
 | `close --actor <name>` | Close the migration. State becomes `STABLE` |
 | `abandon --actor <name>` | Give up on a candidate, before anything is activated |
 | `rollback --actor <name>` | Revert to the target locked when the migration began |
@@ -151,7 +151,7 @@ Run `modelshift states` for the full table.
 `--root <dir>`, `--migration <id>`, `--json` where supported. An approval or activation
 without `--actor` is refused: an approval with no named actor is not an approval.
 
-The same operations are a library: `import { register, evaluate, approve, activate } from 'modelshift'`.
+The same operations are a library: `import { register, evaluate, approve, activate } from 'modelpromote'`.
 
 ## 6. Configuration
 
@@ -171,7 +171,7 @@ The same operations are a library: `import { register, evaluate, approve, activa
 ```
 
 **Verification traffic is never invented for you.** For a custom integration you must supply
-`verificationInputs`, or export `verificationPlan()` from your ports file. modelshift will not
+`verificationInputs`, or export `verificationPlan()` from your ports file. modelpromote will not
 push its own demo fixtures through your adapters, because that traffic reaches your real
 system. With neither present, verification **fails closed** with an actionable error.
 
@@ -193,7 +193,7 @@ After a migration closes as `STABLE`, the candidate is your new baseline in fact
 
 ## 7. State-machine semantics
 
-- **The ledger is the state.** `.modelshift/migrations/NNNN.jsonl` is append-only, and current
+- **The ledger is the state.** `.modelpromote/migrations/NNNN.jsonl` is append-only, and current
   state is a fold over it. No separate state field can drift from the record.
 - **Reads are strict in four independent ways**: record structure, `from`/`to` chain
   continuity, **semantic legality** (every `(action, from, to)` triple must be one the
@@ -215,9 +215,14 @@ After a migration closes as `STABLE`, the candidate is your new baseline in fact
   separate `recovery.jsonl`, and leaves the corrupt file untouched for investigation.
 - **Machine verdict and human permission are different events.** `ACCEPTED` means the evidence
   satisfied the locked rules; `APPROVED` means a named person authorised the change.
-- **The policy is locked before the evidence exists.** Change it afterwards and the verdict is
-  void: the migration moves to `EVIDENCE_STALE`, which has no path to `APPROVED`. The only way
-  forward is a fresh evaluation under the current policy, and the invalidation is recorded.
+- **The policy is locked before the evidence exists.** `register` records a policy
+  **snapshot** for the audit record; the policy that actually **governs** a verdict is locked
+  at the start of each `evaluate`, before the evaluator runs, so rules can never be chosen to
+  fit a score already seen. `decide` and `approve` refuse if the policy has moved since. The
+  snapshot at register enforces nothing on its own: if the policy changes between `register`
+  and `evaluate`, the evaluation's own lock is what counts. Change the policy after evidence
+  exists and that evidence is void: the migration moves to `EVIDENCE_STALE`, which has no path
+  to `APPROVED`. The only way forward is a fresh evaluation, and the invalidation is recorded.
 - **Activation and rollback are two-phase.** The intent is recorded *before* the external write,
   so an interruption leaves `ACTIVATING` (something may be live, nothing confirmed) rather than
   a state that claims safety. The outcome is recorded from what the target **read back**.
@@ -239,7 +244,7 @@ system unchanged.
 `read()` is not decoration. Activation is not "we wrote the config", it is "the target reports
 the new value back". A write that silently no-ops is exactly what it catches.
 
-Drop a `modelshift.ports.ts` (or `.js` when installed) beside your config exporting
+Drop a `modelpromote.ports.ts` (or `.js` when installed) beside your config exporting
 `createPorts(root)`. The CLI picks it up automatically.
 
 **Evidence crossing the `Evaluator` boundary is validated** before it can produce an
@@ -287,14 +292,14 @@ deliberately broken** (`docs/mutation-testing.md`, 40 mutations, all killed).
   once the previous one reaches `STABLE`, `ROLLED_BACK` or `ABANDONED`. No concurrent or
   per-tenant migrations.
 - **No partial rollout.** Activation is all-or-nothing. Percentage and per-segment rollout are
-  not implemented; a flag platform does that better, and modelshift is meant to sit in front of
+  not implemented; a flag platform does that better, and modelpromote is meant to sit in front of
   one rather than replace it.
 - **The bundled evaluator is exact-match**, deliberately the weakest useful metric.
 - **The bundled adapters are local stand-ins.** No provider integration ships in v0.
 - **Verification proves a temporal claim, not a per-request one.** A confirmation means *every
   observation your telemetry recorded after the window opened named the candidate*, with at
   least `minObservations` of them. It does **not** mean *these exact verification calls were
-  served by the candidate*: modelshift does not propagate a correlation id through your
+  served by the candidate*: modelpromote does not propagate a correlation id through your
   adapter, so unrelated traffic in the same window counts toward the claim. Every place this
   is reported says so, and the recorded assertion carries `evidenceClass: "temporal-window"`.
 - **The ledger detects inconsistency, not tampering.** The four read-time layers catch
@@ -307,7 +312,9 @@ deliberately broken** (`docs/mutation-testing.md`, 40 mutations, all killed).
   check only against a case file you still hold. A signed or hash-chained ledger is the honest
   fix and is on the roadmap.
 - **No authentication.** `--actor` is an assertion, not an identity.
-- **Node 22.6+** for the source workflow. The published package is plain JavaScript.
+- **Node 22 or newer.** The published package is plain JavaScript with zero runtime
+  dependencies. Contributing from source additionally needs Node 22.6+, because the test
+  and demo scripts run TypeScript directly via `--experimental-strip-types`.
 - **The demo transcript is not byte-identical across runs.** The application output is
   deterministic (fixed clock, no randomness), but Node's experimental type-stripping warning
   includes a changing process id, so the full stream differs.
@@ -326,7 +333,23 @@ Integration first. The point is to be the governance layer over tools you alread
 - An explicit partial-coverage contract, in which a measured subset is represented as a subset
 - Machine-readable report output for CI and evidence pipelines
 
-## Install and build
+## Install
+
+```bash
+npm install modelpromote
+```
+
+```js
+import { register, evaluate, decide, approve, activate, verify } from 'modelpromote';
+
+// Point the four ports at your own provider, evaluator, config store and logs in a
+// modelpromote.ports.ts beside your config, then drive the lifecycle:
+register(root, 'your-candidate-model', config, () => new Date().toISOString());
+```
+
+Or drive it from the command line: `npx modelpromote init`.
+
+## Build from source
 
 ```bash
 npm install        # devDependencies only: TypeScript and ESLint

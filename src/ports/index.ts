@@ -1,6 +1,6 @@
 // THE ADAPTER BOUNDARY.
 //
-// modelshift owns the lifecycle, the policy decision and the record. It deliberately owns
+// modelpromote owns the lifecycle, the policy decision and the record. It deliberately owns
 // none of the following, because mature tools already do them well:
 //
 //   - generating text            -> your provider SDK, or a gateway such as LiteLLM
@@ -8,7 +8,7 @@
 //   - changing what serves       -> your config store, a flag service, an env var
 //   - recording what happened    -> your logs, OpenTelemetry, Langfuse
 //
-// Each is a port. Implement the small interface and modelshift governs whatever is behind
+// Each is a port. Implement the small interface and modelpromote governs whatever is behind
 // it. Nothing in the core imports an adapter; the wiring happens once, at the edge.
 
 import type { EvaluationCase, EvaluationResult, ModelId } from '../domain/types.ts';
@@ -23,7 +23,7 @@ export interface ModelAdapter {
  * Scores a model over a case set.
  *
  * The default implementation is exact-match, which is intentionally weak: quality metrics
- * are a solved and competitive space, and modelshift is not trying to win it. Point this
+ * are a solved and competitive space, and modelpromote is not trying to win it. Point this
  * port at a real evaluator and the lifecycle is unchanged.
  */
 export interface Evaluator {
@@ -52,7 +52,7 @@ export interface ServingObservation {
 /**
  * Reports which model served recent traffic.
  *
- * Point this at your own logs, OTel, or a provider's response metadata. modelshift only
+ * Point this at your own logs, OTel, or a provider's response metadata. modelpromote only
  * needs to know what identity actually answered.
  */
 export interface TelemetrySource {
@@ -72,7 +72,7 @@ export interface Ports {
    * The traffic to issue during post-activation verification.
    *
    * Verification traffic reaches your REAL system through your REAL adapters, so it must be
-   * traffic you chose. modelshift will never fall back to its own demo fixtures for a custom
+   * traffic you chose. modelpromote will never fall back to its own demo fixtures for a custom
    * integration: if neither this nor `verificationInputs` in config is present, verification
    * fails closed with an actionable error.
    */

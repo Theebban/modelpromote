@@ -19,7 +19,7 @@ friction. Apache-2.0 adds two things that matter for a governance tool specifica
 The cost is a longer file and a `NOTICE` convention. That is a small price for a project
 intended to be adopted inside other organisations.
 
-**Why not a copyleft licence (GPL/AGPL).** modelshift is designed to be imported into
+**Why not a copyleft licence (GPL/AGPL).** modelpromote is designed to be imported into
 someone else's proprietary application. Copyleft would defeat the adoption model. AGPL would
 be actively wrong here: there is no hosted service to protect.
 

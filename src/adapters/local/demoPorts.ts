@@ -18,7 +18,7 @@ import {
   recordObservation,
 } from './index.ts';
 
-export const DEMO_DIR = '.modelshift';
+export const DEMO_DIR = '.modelpromote';
 
 /** How many observations the demo telemetry file already holds. */
 function existingObservationCount(path: string): number {

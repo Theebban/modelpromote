@@ -1,6 +1,6 @@
 // INTEGRATION EXAMPLE.
 //
-// Copy this to your project root as `modelshift.ports.ts` and the CLI will pick it up
+// Copy this to your project root as `modelpromote.ports.ts` and the CLI will pick it up
 // automatically instead of the built-in demo wiring. This file is the entire integration
 // surface: the lifecycle, the policy and the audit record do not change.
 //
@@ -30,7 +30,7 @@ function providerAdapter(id: ModelId): ModelAdapter {
 // ---------------------------------------------------------------------------
 // 2. EVALUATOR. Point this at your real evaluation.
 // ---------------------------------------------------------------------------
-// modelshift does not care how the score is produced, only that it is comparable across
+// modelpromote does not care how the score is produced, only that it is comparable across
 // the baseline and the candidate. Shell out to Promptfoo, call DeepEval, read a CI
 // artifact, or use an LLM judge. Return the same shape.
 const externalEvaluator = {
@@ -107,8 +107,8 @@ export function createPorts(root: string): Ports {
   return {
     models,
     evaluator: externalEvaluator,
-    activation: activationTarget(`${root}/.modelshift/serving.json`),
-    telemetry: telemetrySource(`${root}/.modelshift/telemetry.jsonl`),
+    activation: activationTarget(`${root}/.modelpromote/serving.json`),
+    telemetry: telemetrySource(`${root}/.modelpromote/telemetry.jsonl`),
     now: () => new Date().toISOString(),
   };
 }

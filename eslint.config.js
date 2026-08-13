@@ -16,6 +16,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['node_modules/**', '.modelshift/**', 'coverage/**'],
+    ignores: ['node_modules/**', '.modelpromote/**', 'coverage/**'],
   },
 );

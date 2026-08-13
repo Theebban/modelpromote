@@ -9,6 +9,19 @@ version once 1.0.0 is out, because both are things users build process around.
 
 ## [Unreleased]
 
+### Renamed for first public release
+
+The project was developed under the working name **modelshift** and is released as
+**modelpromote**. Nothing was ever published under the old name, so there is no compatibility
+shim and no deprecated package: `modelpromote` is the only name this tool has ever had in
+public. Commits made before the rename still say `modelshift`, and are left alone rather than
+rewritten, because the history is a truthful record of how the tool was built.
+
+The rename changed the package name, the CLI binary, the config file
+(`modelpromote.config.json`), the ports file (`modelpromote.ports.ts`), the state directory
+(`.modelpromote/`) and the `ModelPromoteConfig` type. It changed no behaviour.
+
+
 ### Corrected after a SECOND independent release review
 
 The second review confirmed every correction below from the first review, then found a class
@@ -92,19 +105,19 @@ edited out.
   `EVIDENCE_STALE`, reached by an explicit recorded `invalidateEvidence` transition, with no
   path to `APPROVED`.
 - **Verification inputs must be declared for a custom integration.** The bundled demo fixtures
-  can no longer be issued through adapters modelshift did not write. Fails closed.
+  can no longer be issued through adapters modelpromote did not write. Fails closed.
 - **Evidence crossing the `Evaluator` boundary is validated** for model identity, score range,
   count coherence, duplicate case ids and unsubmitted case ids.
 - **Identifiers are rejected, and adapter-supplied strings escaped**, so an actor or model name
   cannot forge a line of the audit report.
-- **Many migrations per project**, retained as `.modelshift/migrations/NNNN.jsonl` with a new
+- **Many migrations per project**, retained as `.modelpromote/migrations/NNNN.jsonl` with a new
   `history` command. A new migration may begin once the previous reaches a terminal state.
 - **`abandon`**, so a rejected candidate no longer wedges the project. Legal only before
   anything is activated. Found by walking the CLI as a new user.
 - **A real build.** `bin` pointed at a `.ts` file and could not execute when installed. The
   package now ships built JavaScript with a public library entry point, and a package smoke
   test installs the tarball and runs the installed binary.
-- Public positioning corrected: modelshift does not claim to have invented governed AI
+- Public positioning corrected: modelpromote does not claim to have invented governed AI
   rollout. See the README.
 
 ## [0.1.0] - unreleased, local only

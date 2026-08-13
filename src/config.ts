@@ -13,7 +13,7 @@ import { ConfigError } from './domain/errors.ts';
 import type { ModelId } from './domain/types.ts';
 import { createHash } from 'node:crypto';
 
-export const CONFIG_FILE = 'modelshift.config.json';
+export const CONFIG_FILE = 'modelpromote.config.json';
 
 export interface AcceptancePolicy {
   /** Candidate score must be at least this. Range 0 to 1. */
@@ -33,7 +33,7 @@ export interface VerificationBounds {
   readonly minObservations: number;
 }
 
-export interface ModelshiftConfig {
+export interface ModelPromoteConfig {
   /**
    * The model production is serving today.
    *
@@ -57,13 +57,13 @@ export interface ModelshiftConfig {
    * Traffic to issue during post-activation verification.
    *
    * Optional here, but SOMETHING must supply it for a custom integration: either this, or a
-   * `verificationPlan()` export from `modelshift.ports.ts`. modelshift never falls back to
+   * `verificationPlan()` export from `modelpromote.ports.ts`. modelpromote never falls back to
    * its own demo fixtures for adapters it did not write.
    */
   readonly verificationInputs?: readonly string[];
 }
 
-export const DEFAULT_CONFIG: ModelshiftConfig = Object.freeze({
+export const DEFAULT_CONFIG: ModelPromoteConfig = Object.freeze({
   baselineModel: 'demo-baseline',
   rollbackModel: 'demo-baseline',
   acceptance: Object.freeze({
@@ -101,7 +101,7 @@ function asModelId(v: unknown, field: string): ModelId {
   return v;
 }
 
-export function parseConfig(raw: unknown): ModelshiftConfig {
+export function parseConfig(raw: unknown): ModelPromoteConfig {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new ConfigError('the configuration root must be an object');
   }
@@ -155,10 +155,10 @@ export function configPath(root: string): string {
   return join(root, CONFIG_FILE);
 }
 
-export function loadConfig(root: string): ModelshiftConfig {
+export function loadConfig(root: string): ModelPromoteConfig {
   const path = configPath(root);
   if (!existsSync(path)) {
-    throw new ConfigError(`no ${CONFIG_FILE} found at ${path}. Run "modelshift init" first`);
+    throw new ConfigError(`no ${CONFIG_FILE} found at ${path}. Run "modelpromote init" first`);
   }
   let parsed: unknown;
   try {
@@ -169,7 +169,7 @@ export function loadConfig(root: string): ModelshiftConfig {
   return parseConfig(parsed);
 }
 
-export function writeConfig(root: string, config: ModelshiftConfig): void {
+export function writeConfig(root: string, config: ModelPromoteConfig): void {
   writeFileSync(configPath(root), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 }
 

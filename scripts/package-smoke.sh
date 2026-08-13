@@ -47,12 +47,12 @@ cd "$WORK/consumer"
 npm init -y > /dev/null 2>&1
 npm pkg set type=module > /dev/null 2>&1
 npm install --silent "$WORK/$TARBALL" > "$WORK/install.log" 2>&1 || { cat "$WORK/install.log"; fail "install"; }
-MS="$WORK/consumer/node_modules/.bin/modelshift"
+MS="$WORK/consumer/node_modules/.bin/modelpromote"
 [ -x "$MS" ] || fail "installed binary not found or not executable at $MS"
 echo "ok"
 
 step "4. run the INSTALLED binary (no --experimental-strip-types anywhere)"
-"$MS" --help > "$WORK/help.log" 2>&1 || { cat "$WORK/help.log"; fail "installed modelshift --help"; }
+"$MS" --help > "$WORK/help.log" 2>&1 || { cat "$WORK/help.log"; fail "installed modelpromote --help"; }
 grep -q "governed change control" "$WORK/help.log" || fail "--help output unexpected"
 echo "ok"
 
@@ -88,7 +88,7 @@ cat > "$WORK/consumer/lib-check.mjs" <<'EOF'
 import {
   MIGRATION_STATES, TRANSITIONS, nextState, IllegalTransitionError,
   BaselineDriftError, assertCrossEventConsistency, assertValidEvidence, statusOf,
-} from 'modelshift';
+} from 'modelpromote';
 if (!Array.isArray(MIGRATION_STATES) || MIGRATION_STATES.length === 0) throw new Error('MIGRATION_STATES missing');
 if (nextState('APPROVED', 'beginActivation') !== 'ACTIVATING') throw new Error('nextState wrong');
 try { nextState('REGISTERED', 'beginActivation'); throw new Error('expected refusal'); }
@@ -115,7 +115,7 @@ node "$WORK/consumer/lib-check.mjs" "$PROJ" || fail "public library import"
 echo "ok"
 
 step "7. the INSTALLED binary refuses a substituted candidate identity"
-LEDGER="$PROJ/.modelshift/migrations/0001.jsonl"
+LEDGER="$PROJ/.modelpromote/migrations/0001.jsonl"
 cp "$LEDGER" "$WORK/ledger.bak"
 # One field. No action, no from, no to, no sequence change.
 node -e '

@@ -1,6 +1,6 @@
 // VALIDATION OF EVIDENCE CROSSING THE EVALUATOR BOUNDARY.
 //
-// modelshift's whole value is governance over evidence it did not produce. The Evaluator is
+// modelpromote's whole value is governance over evidence it did not produce. The Evaluator is
 // a port: the implementation belongs to the user, or to a third-party integration, and it
 // can be wrong without being malicious. A wrapper around an external eval runner that
 // mis-parses one field can return score 1.0 for a model that answered nothing.

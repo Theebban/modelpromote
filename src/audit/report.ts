@@ -75,7 +75,9 @@ export function renderReport(events: readonly MigrationEvent[], state: Migration
     out.push(line('     actor', e.actor));
 
     if (e.action === 'register') {
-      out.push(line('  policy at register', s(e.detail['policyHashAtRegister'])));
+      // Labelled as a snapshot on purpose. The hash that GOVERNS a verdict is the one taken
+      // at evaluate; this one records what the policy was when the migration opened.
+      out.push(line('  policy snapshot', `${s(e.detail['policyHashAtRegister'])}  (at register, not the governing lock)`));
     }
     if (e.action === 'evaluate' && e.detail['evaluation']) {
       out.push(...renderEvaluation(e.detail['evaluation'] as ComparativeEvaluation));

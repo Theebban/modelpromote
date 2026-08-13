@@ -25,7 +25,7 @@
 ```
 
 Nothing in the core imports an adapter. Wiring happens once, at the edge, in a
-`modelshift.ports.ts` you write.
+`modelpromote.ports.ts` you write.
 
 ## Four decisions worth explaining
 
@@ -81,9 +81,16 @@ rather than leaving it to be discovered as a surprise.
 
 ### The policy is locked before the evidence exists
 
-The governing policy is hashed at `register` and re-hashed at each `evaluate`, which is the
-moment evidence is produced. `decide` and `approve` then refuse outright if the current policy
-no longer matches.
+`register` records a policy **snapshot**, for the audit record only. The policy that actually
+GOVERNS a verdict is hashed at the start of each `evaluate`, before the evaluator runs, which
+is the moment evidence is produced. `decide` and `approve` then refuse outright if the current
+policy no longer matches that governing hash.
+
+The distinction matters when the two differ. If the policy changes between `register` and
+`evaluate`, nothing complains and nothing should: re-measuring under the current rules is the
+supported path, and the evaluation's own lock is what the verdict answers to. The snapshot at
+register enforces nothing on its own, and the report labels it that way so a reader never
+mistakes it for the lock.
 
 The first implementation *warned* and continued. That is not change control: it let an
 operator see a score, relax the rule the score failed, and proceed on evidence earned under
@@ -197,7 +204,7 @@ A confirmation from `assertServingModelInWindow` proves:
 > and there were at least `minObservations` of them.
 
 It does not prove that the specific calls `runBoundedVerification` issued were those
-observations. modelshift does not propagate a correlation id through `ModelAdapter`, so it
+observations. modelpromote does not propagate a correlation id through `ModelAdapter`, so it
 cannot pair one with the other. The second review demonstrated the gap directly: bounded calls,
 then unrelated ambient candidate telemetry after the mark, and verification confirmed.
 

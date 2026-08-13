@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// modelshift CLI.
+// modelpromote CLI.
 //
 // Every command is a single lifecycle action. Nothing is implicit: no command silently
 // performs a transition you did not ask for, and no command activates anything.
@@ -33,9 +33,9 @@ import type { Ports } from '../ports/index.ts';
 import type { EvaluationCase } from '../domain/types.ts';
 import { DEMO_CASES } from '../adapters/local/fixtures.ts';
 
-const PORTS_FILE = 'modelshift.ports.ts';
-const PORTS_FILE_JS = 'modelshift.ports.js';
-const CASES_FILE = 'modelshift.cases.json';
+const PORTS_FILE = 'modelpromote.ports.ts';
+const PORTS_FILE_JS = 'modelpromote.ports.js';
+const CASES_FILE = 'modelpromote.cases.json';
 
 function out(s = ''): void {
   process.stdout.write(`${s}\n`);
@@ -77,7 +77,7 @@ function commandIndex(argv: readonly string[]): number {
 /**
  * Load the project's own port wiring if it exists, otherwise use the demo wiring.
  *
- * This is the integration seam: drop a `modelshift.ports.ts` (or `.js` when installed as a
+ * This is the integration seam: drop a `modelpromote.ports.ts` (or `.js` when installed as a
  * package) beside your config, export `createPorts(root)`, and the same lifecycle governs
  * your real system.
  */
@@ -100,21 +100,21 @@ function loadCases(root: string): readonly EvaluationCase[] {
   return JSON.parse(readFileSync(path, 'utf8')) as EvaluationCase[];
 }
 
-const HELP = `modelshift - governed change control for production AI models
+const HELP = `modelpromote - governed change control for production AI models
 
-  modelshift init                     create ${CONFIG_FILE} and the migration store
-  modelshift register <candidate>     begin a migration to <candidate>
-  modelshift evaluate                 measure baseline vs candidate, then apply the policy
-  modelshift status                   show current state (read only, never mutates)
-  modelshift approve  --actor <name>  human authorisation, only legal once ACCEPTED
-  modelshift activate --actor <name>  switch the serving model, confirmed by read-back
-  modelshift verify                   bounded traffic, then assert from telemetry
-  modelshift close    --actor <name>  close the migration, state becomes STABLE
-  modelshift rollback --actor <name>  revert to the configured rollback model
-  modelshift abandon  --actor <name>  give up on this candidate (nothing activated yet)
-  modelshift report                   full audit record, rendered from the ledger
-  modelshift history                  every migration in this project
-  modelshift states                   print the transition table
+  modelpromote init                     create ${CONFIG_FILE} and the migration store
+  modelpromote register <candidate>     begin a migration to <candidate>
+  modelpromote evaluate                 measure baseline vs candidate, then apply the policy
+  modelpromote status                   show current state (read only, never mutates)
+  modelpromote approve  --actor <name>  human authorisation, only legal once ACCEPTED
+  modelpromote activate --actor <name>  switch the serving model, confirmed by read-back
+  modelpromote verify                   bounded traffic, then assert from telemetry
+  modelpromote close    --actor <name>  close the migration, state becomes STABLE
+  modelpromote rollback --actor <name>  revert to the configured rollback model
+  modelpromote abandon  --actor <name>  give up on this candidate (nothing activated yet)
+  modelpromote report                   full audit record, rendered from the ledger
+  modelpromote history                  every migration in this project
+  modelpromote states                   print the transition table
 
 Options
   --root <dir>        project directory (default: current directory)
@@ -156,7 +156,7 @@ async function main(argv: readonly string[]): Promise<number> {
     out(`config     : ${configPath(root)}`);
     out(`migrations : ${path}`);
     out('');
-    out('Next: modelshift register demo-candidate');
+    out('Next: modelpromote register demo-candidate');
     return 0;
   }
 
@@ -165,7 +165,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (cmd === 'register') {
     const candidate = commandArg;
     if (candidate === undefined || candidate.startsWith('-')) {
-      out('usage: modelshift register <candidate-model-id>');
+      out('usage: modelpromote register <candidate-model-id>');
       return 2;
     }
     if (!storeExists(root)) initStore(root);
@@ -191,7 +191,7 @@ async function main(argv: readonly string[]): Promise<number> {
     for (const c of verdict.checks) out(`  ${c.passed ? 'pass' : 'FAIL'}  ${c.rule.padEnd(18)}${c.detail}`);
     for (const r of verdict.reasons) out(`  reason: ${r}`);
     out('');
-    out(verdict.accepted ? 'Next: modelshift approve --actor <your-name>' : 'The candidate cannot be approved while the policy fails.');
+    out(verdict.accepted ? 'Next: modelpromote approve --actor <your-name>' : 'The candidate cannot be approved while the policy fails.');
     return verdict.accepted ? 0 : 1;
   }
 
@@ -229,27 +229,27 @@ async function main(argv: readonly string[]): Promise<number> {
       out(`  ${v.id}  ${String(v.state).padEnd(20)} ${String(v.candidate).padEnd(24)} ${v.events.length} events${v.id === active ? '   <- active' : ''}`);
     }
     out('');
-    out('Every migration is retained. "modelshift report --migration <id>" prints any of them.');
+    out('Every migration is retained. "modelpromote report --migration <id>" prints any of them.');
     return 0;
   }
 
   if (cmd === 'approve') {
     const actor = flag(argv, 'actor', '');
     if (actor === '') {
-      out('usage: modelshift approve --actor <name>');
+      out('usage: modelpromote approve --actor <name>');
       out('An approval with no named actor is not an approval.');
       return 2;
     }
     approve(root, actor, config, () => new Date().toISOString());
     out(`approved by ${actor}`);
-    out('Next: modelshift activate --actor <your-name>');
+    out('Next: modelpromote activate --actor <your-name>');
     return 0;
   }
 
   if (cmd === 'activate') {
     const actor = flag(argv, 'actor', '');
     if (actor === '') {
-      out('usage: modelshift activate --actor <name>');
+      out('usage: modelpromote activate --actor <name>');
       return 2;
     }
     const loaded = await loadPorts(root, config.baselineModel);
@@ -258,7 +258,7 @@ async function main(argv: readonly string[]): Promise<number> {
     out(`  requested       : ${r.requested}`);
     out(`  target read back: ${r.observed}`);
     out(`  confirmed       : YES`);
-    out('Next: modelshift verify');
+    out('Next: modelpromote verify');
     return 0;
   }
 
@@ -286,14 +286,14 @@ async function main(argv: readonly string[]): Promise<number> {
     out('                  NOT a per-request correlation with the calls issued above)');
     out(`  reason        : ${assertion.reason}`);
     out('');
-    out(assertion.confirmed ? 'Next: modelshift close --actor <your-name>' : 'Verification failed. Next: modelshift rollback --actor <your-name>');
+    out(assertion.confirmed ? 'Next: modelpromote close --actor <your-name>' : 'Verification failed. Next: modelpromote rollback --actor <your-name>');
     return assertion.confirmed ? 0 : 1;
   }
 
   if (cmd === 'close') {
     const actor = flag(argv, 'actor', '');
     if (actor === '') {
-      out('usage: modelshift close --actor <name>');
+      out('usage: modelpromote close --actor <name>');
       return 2;
     }
     const e = stabilise(root, actor, () => new Date().toISOString());
@@ -305,7 +305,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (cmd === 'abandon') {
     const actor = flag(argv, 'actor', '');
     if (actor === '') {
-      out('usage: modelshift abandon --actor <name> [--reason "<why>"]');
+      out('usage: modelpromote abandon --actor <name> [--reason "<why>"]');
       return 2;
     }
     const e = abandon(root, actor, flag(argv, 'reason', 'no reason given'), () => new Date().toISOString());
@@ -317,7 +317,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (cmd === 'rollback') {
     const actor = flag(argv, 'actor', '');
     if (actor === '') {
-      out('usage: modelshift rollback --actor <name>');
+      out('usage: modelpromote rollback --actor <name>');
       return 2;
     }
     const loaded = await loadPorts(root, config.baselineModel);

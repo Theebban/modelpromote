@@ -1,6 +1,6 @@
 // The append-only migration ledger, and the migration history around it.
 //
-// Each migration is one file under `.modelshift/migrations/`. The ACTIVE migration is the
+// Each migration is one file under `.modelpromote/migrations/`. The ACTIVE migration is the
 // highest-numbered one that has not reached a terminal state; when it terminates, its file
 // stays exactly where it is and the next `register` opens a new one. History is therefore
 // retained by default and needs no archiving step and no manual deletion.
@@ -29,7 +29,7 @@ import { MIGRATION_ACTIONS, MIGRATION_STATES, TERMINAL_STATES } from '../domain/
 import { foldState, isLegalEvent } from '../domain/machine.ts';
 import { assertCrossEventConsistency } from './consistency.ts';
 
-export const STATE_DIR = '.modelshift';
+export const STATE_DIR = '.modelpromote';
 export const MIGRATIONS_DIR = 'migrations';
 export const RECOVERY_FILE = 'recovery.jsonl';
 

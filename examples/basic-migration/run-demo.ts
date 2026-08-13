@@ -37,7 +37,7 @@ function refused(label: string, fn: () => unknown): void {
 }
 
 async function main(): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), 'modelshift-demo-'));
+  const root = mkdtempSync(join(tmpdir(), 'modelpromote-demo-'));
   try {
     writeConfig(root, DEFAULT_CONFIG);
     initStore(root);

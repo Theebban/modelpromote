@@ -13,7 +13,7 @@
 //   PROVEN      every observation your telemetry recorded after the window opened names the
 //               candidate as the serving model, and there were at least `minObservations`
 //               of them.
-//   NOT PROVEN  that these exact verification calls were the observations. modelshift does
+//   NOT PROVEN  that these exact verification calls were the observations. modelpromote does
 //               not propagate a correlation id through your adapter, so it cannot pair a
 //               call it issued with a row your telemetry produced.
 //
@@ -136,7 +136,7 @@ export interface TelemetryAssertion {
  * as a model that served nothing, and the safe reading of both is "unconfirmed".
  *
  * THE WINDOW IS TEMPORAL. `windowOpensAfter` is a telemetry row id used purely as an
- * ordering mark; it is not an id of anything modelshift issued. Confirmation therefore means
+ * ordering mark; it is not an id of anything modelpromote issued. Confirmation therefore means
  * "the candidate served all traffic observed after this point", not "the candidate served
  * these specific verification calls". The distinction matters when other traffic reaches the
  * same telemetry stream, and the reason strings say so rather than implying the stronger

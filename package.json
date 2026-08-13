@@ -1,12 +1,12 @@
 {
-  "name": "modelshift",
+  "name": "modelpromote",
   "version": "0.1.0",
   "description": "A vendor-neutral change-control layer for swapping the AI model in a production application: evaluate, accept against a locked policy, approve, activate with read-back confirmation, verify from telemetry, roll back, and keep one portable migration record.",
   "type": "module",
   "license": "UNLICENSED",
   "private": true,
   "engines": {
-    "node": ">=22.6.0"
+    "node": ">=22.0.0"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,13 +18,13 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "modelshift": "./dist/cli/index.js"
+    "modelpromote": "dist/cli/index.js"
   },
   "files": [
     "dist",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE-RECOMMENDATION.md"
+    "LICENSE"
   ],
   "keywords": [
     "llm",
@@ -37,7 +37,7 @@
     "ai-ops"
   ],
   "scripts": {
-    "modelshift": "node --experimental-strip-types src/cli/index.ts",
+    "modelpromote": "node --experimental-strip-types src/cli/index.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests",
@@ -53,5 +53,14 @@
     "eslint": "^9.39.5",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.66.0"
-  }
+  },
+  "author": "Theebbanraj Asokan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Theebban/modelpromote.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Theebban/modelpromote/issues"
+  },
+  "homepage": "https://github.com/Theebban/modelpromote#readme"
 }

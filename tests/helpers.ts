@@ -6,7 +6,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_CONFIG, writeConfig, loadConfig, type ModelshiftConfig } from '../src/config.ts';
+import { DEFAULT_CONFIG, writeConfig, loadConfig, type ModelPromoteConfig } from '../src/config.ts';
 import { initStore } from '../src/store/ledger.ts';
 import { demoPorts } from '../src/adapters/local/demoPorts.ts';
 import { DEMO_CASES } from '../src/adapters/local/fixtures.ts';
@@ -14,7 +14,7 @@ import { activate, approve, decide, evaluate, register, verify } from '../src/en
 import type { Ports } from '../src/ports/index.ts';
 import type { ModelId } from '../src/domain/types.ts';
 
-export const TMP_PREFIX = 'modelshift-test-';
+export const TMP_PREFIX = 'modelpromote-test-';
 
 /** A fixed clock, so audit output is byte-deterministic in tests. */
 export function fixedClock(): () => string {
@@ -25,7 +25,7 @@ export function fixedClock(): () => string {
   };
 }
 
-export function makeRoot(config: Partial<ModelshiftConfig> = {}): string {
+export function makeRoot(config: Partial<ModelPromoteConfig> = {}): string {
   const root = mkdtempSync(join(tmpdir(), TMP_PREFIX));
   writeConfig(root, {
     ...DEFAULT_CONFIG,
@@ -110,7 +110,7 @@ export async function driveTo(
   target: Stage,
   candidate = 'demo-candidate',
   portsOverride?: Ports,
-): Promise<{ config: ModelshiftConfig; ports: Ports; clock: () => string }> {
+): Promise<{ config: ModelPromoteConfig; ports: Ports; clock: () => string }> {
   const config = loadConfig(root);
   const ports = portsOverride ?? portsFor(root);
   const clock = fixedClock();

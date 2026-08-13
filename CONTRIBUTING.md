@@ -35,7 +35,7 @@ argument and a replacement test, not just a passing suite.
 
 ## Scope
 
-modelshift governs the transition from one already-integrated model to another. It is not a
+modelpromote governs the transition from one already-integrated model to another. It is not a
 gateway, an eval framework, an observability platform or an agent runtime. Proposals that
 reimplement one of those will get pushed toward a port instead.
 

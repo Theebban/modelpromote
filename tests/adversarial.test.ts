@@ -127,7 +127,7 @@ describe('verification input contract', () => {
 
   test('a custom integration with no declared inputs FAILS CLOSED', async () => {
     const config = loadConfig(root);
-    const loaded = { ports: customPorts(), source: 'modelshift.ports.ts', custom: true };
+    const loaded = { ports: customPorts(), source: 'modelpromote.ports.ts', custom: true };
     await assert.rejects(
       () => resolveVerificationInputs(config, loaded, demoFixtures),
       NoVerificationPlanError,
@@ -138,14 +138,14 @@ describe('verification input contract', () => {
   test('a custom integration cannot unlock fixtures by claiming isDemo', async () => {
     const config = loadConfig(root);
     // A copied demo wiring, or a deliberate attempt. Both must fail.
-    const loaded = { ports: customPorts({ isDemo: true }), source: 'modelshift.ports.ts', custom: true };
+    const loaded = { ports: customPorts({ isDemo: true }), source: 'modelpromote.ports.ts', custom: true };
     await assert.rejects(() => resolveVerificationInputs(config, loaded, demoFixtures), NoVerificationPlanError);
   });
 
   test('explicit config inputs are what is issued, and they take precedence', async () => {
     writeConfig(root, { ...DEFAULT_CONFIG, verificationInputs: ['real-1', 'real-2'] });
     const config = loadConfig(root);
-    const loaded = { ports: customPorts({ verificationPlan: () => ['from-plan'] }), source: 'modelshift.ports.ts', custom: true };
+    const loaded = { ports: customPorts({ verificationPlan: () => ['from-plan'] }), source: 'modelpromote.ports.ts', custom: true };
     const r = await resolveVerificationInputs(config, loaded, demoFixtures);
     assert.deepEqual(r.inputs, ['real-1', 'real-2']);
     assert.equal(r.origin, 'config');
@@ -154,7 +154,7 @@ describe('verification input contract', () => {
   test('a verificationPlan() from the ports file is what is issued', async () => {
     const config = loadConfig(root);
     const planned = ['plan-1', 'plan-2', 'plan-3'];
-    const loaded = { ports: customPorts({ verificationPlan: () => planned }), source: 'modelshift.ports.ts', custom: true };
+    const loaded = { ports: customPorts({ verificationPlan: () => planned }), source: 'modelpromote.ports.ts', custom: true };
     const r = await resolveVerificationInputs(config, loaded, demoFixtures);
     assert.deepEqual(r.inputs, planned, 'the project plan must be issued verbatim');
     assert.equal(r.origin, 'ports-plan');
@@ -170,7 +170,7 @@ describe('verification input contract', () => {
 
   test('an empty plan is treated as no plan, not as zero traffic', async () => {
     const config = loadConfig(root);
-    const loaded = { ports: customPorts({ verificationPlan: () => [] }), source: 'modelshift.ports.ts', custom: true };
+    const loaded = { ports: customPorts({ verificationPlan: () => [] }), source: 'modelpromote.ports.ts', custom: true };
     await assert.rejects(() => resolveVerificationInputs(config, loaded, demoFixtures), NoVerificationPlanError);
   });
 });

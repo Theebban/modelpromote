@@ -23,7 +23,7 @@
 // something else. Writing the ledger AFTER the side effect could not express the middle
 // case: it would leave the ledger saying APPROVED while the candidate was already live.
 
-import type { ModelshiftConfig } from './config.ts';
+import type { ModelPromoteConfig } from './config.ts';
 import { policyHash } from './config.ts';
 import {
   ActivationNotConfirmedError,
@@ -202,7 +202,7 @@ function transition(
 export function register(
   root: string,
   candidate: ModelId,
-  config: ModelshiftConfig,
+  config: ModelPromoteConfig,
   now: () => string,
 ): { event: MigrationEvent; id: MigrationId } {
   assertSafeIdentifier(candidate, 'candidate model id');
@@ -236,7 +236,7 @@ export function register(
 export async function evaluate(
   root: string,
   cases: readonly EvaluationCase[],
-  config: ModelshiftConfig,
+  config: ModelPromoteConfig,
   ports: Ports,
 ): Promise<{ event: MigrationEvent; evaluation: ComparativeEvaluation }> {
   const id = requireActive(root);
@@ -290,7 +290,7 @@ export async function evaluate(
 }
 
 /** Assert the policy has not moved since the evidence under consideration was produced. */
-function assertPolicyUnchanged(v: MigrationView, config: ModelshiftConfig, step: string): string {
+function assertPolicyUnchanged(v: MigrationView, config: ModelPromoteConfig, step: string): string {
   const current = policyHash(config.acceptance);
   if (v.governingPolicyHash !== null && v.governingPolicyHash !== current) {
     throw new StalePolicyEvidenceError(v.governingPolicyHash, current, step);
@@ -307,7 +307,7 @@ function assertPolicyUnchanged(v: MigrationView, config: ModelshiftConfig, step:
  */
 export function decide(
   root: string,
-  config: ModelshiftConfig,
+  config: ModelPromoteConfig,
   now: () => string,
 ): { event: MigrationEvent; verdict: AcceptanceVerdict } {
   const id = requireActive(root);
@@ -322,7 +322,7 @@ export function decide(
 }
 
 /** Human authorisation. Separate from the machine verdict, and equally policy-locked. */
-export function approve(root: string, actor: string, config: ModelshiftConfig, now: () => string): MigrationEvent {
+export function approve(root: string, actor: string, config: ModelPromoteConfig, now: () => string): MigrationEvent {
   assertSafeIdentifier(actor, 'actor');
   const id = requireActive(root);
   const v = view(root, id);
@@ -401,7 +401,7 @@ export async function activate(
 export async function verify(
   root: string,
   inputs: readonly string[],
-  config: ModelshiftConfig,
+  config: ModelPromoteConfig,
   ports: Ports,
 ): Promise<{ event: MigrationEvent; run: BoundedRunResult; assertion: TelemetryAssertion }> {
   const id = requireActive(root);
@@ -419,7 +419,7 @@ export async function verify(
   // observations recorded after that mark. Without it, observations from evaluation would
   // count as evidence of activation.
   //
-  // Be precise about what this proves. The window is TEMPORAL, not per-request: modelshift
+  // Be precise about what this proves. The window is TEMPORAL, not per-request: modelpromote
   // does not propagate an id through your adapter, so it cannot pair the calls it issued
   // with the rows your telemetry produced. A confirmation says "everything telemetry saw
   // after this point was served by the candidate", which is weaker than "these exact calls
@@ -488,7 +488,7 @@ export interface RollbackOutcome {
 export async function rollback(
   root: string,
   actor: string,
-  config: ModelshiftConfig,
+  config: ModelPromoteConfig,
   ports: Ports,
 ): Promise<RollbackOutcome> {
   assertSafeIdentifier(actor, 'actor');
@@ -561,7 +561,7 @@ export interface EmergencyOutcome {
 export async function emergencyRollback(
   root: string,
   actor: string,
-  config: ModelshiftConfig,
+  config: ModelPromoteConfig,
   ports: Ports,
   reason: string,
 ): Promise<EmergencyOutcome> {

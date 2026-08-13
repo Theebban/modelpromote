@@ -4,7 +4,7 @@
 // changes to it follow semver; anything reachable only by deep-importing a file path is
 // internal and may move without notice.
 //
-//   import { register, evaluate, decide, approve, activate, verify, rollback } from 'modelshift';
+//   import { register, evaluate, decide, approve, activate, verify, rollback } from 'modelpromote';
 
 // The lifecycle.
 export {
@@ -37,7 +37,7 @@ export {
   policyHash,
   writeConfig,
   type AcceptancePolicy,
-  type ModelshiftConfig,
+  type ModelPromoteConfig,
   type VerificationBounds,
 } from './config.ts';
 
