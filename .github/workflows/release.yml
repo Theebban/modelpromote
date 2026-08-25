@@ -1,0 +1,61 @@
+# PUBLISH TO NPM VIA TRUSTED PUBLISHING (OIDC). NO TOKEN IS STORED ANYWHERE.
+#
+# This workflow is PREPARED, not proven. It has never run. It cannot work until the npm side
+# is configured, because a trusted publisher is a setting on an npm package that must already
+# exist, so the first publication of a brand-new package is always a manual bootstrap.
+#
+# WHAT HAS TO HAPPEN ON npmjs.com FIRST, once:
+#   1. publish modelpromote@0.1.0 manually, from an authenticated machine, with 2FA
+#   2. on the package page: Settings -> Trusted publishers -> GitHub Actions
+#        GitHub owner   : Theebban
+#        repository     : modelpromote
+#        workflow file  : release.yml
+#        environment    : release
+#   3. then set publishing access to
+#        "Require two-factor authentication and disallow tokens"
+#      which is safe precisely BECAUSE this workflow uses OIDC rather than a token.
+#
+# WHY AN ENVIRONMENT. The `release` environment below should carry a required reviewer, so a
+# tagged release stages the publish and then WAITS for a human to approve it. That is the same
+# separation this project exists to enforce: the machine produces the evidence, a named person
+# grants the permission. A pipeline that can publish unattended has collapsed the two.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # Required for OIDC. This is what replaces a stored npm token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Trusted publishing requires Node 22.14+ and npm 11.5.1+. That is a requirement of
+          # the PUBLISHING environment and has nothing to do with engines.node, which is the
+          # floor this package promises its consumers.
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+      - run: npm run check
+      - run: bash scripts/package-smoke.sh
+
+      - name: verify the tag matches the package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          echo "tag=$TAG package=$PKG"
+          test "$TAG" = "$PKG"
+
+      # No --provenance flag: under trusted publishing npm generates and publishes provenance
+      # automatically for a public package from a public repository. Passing it out of habit
+      # would be noise.
+      - run: npm publish
