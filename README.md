@@ -2,6 +2,8 @@
 
 **A vendor-neutral change-control layer for swapping the AI model in a production application.**
 
+Created and maintained by **Theebbanraj Asokan**.
+
 You already have evaluation, an activation mechanism and telemetry. They are probably three
 different products, and none of them holds the whole story of a model change. modelpromote is a
 small, readable layer that connects them, enforces the order they have to happen in, and
@@ -361,10 +363,11 @@ npm run smoke:package   # build, pack, install the tarball, run the installed CL
 
 ## License
 
-**Not yet chosen.** This repository is unpublished and carries no open-source grant.
-Apache-2.0 is the recommendation, with reasoning in
-[LICENSE-RECOMMENDATION.md](LICENSE-RECOMMENDATION.md). Until the owner decides, treat this as
-all rights reserved.
+Copyright © 2026 Theebbanraj Asokan.
+
+Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) for the full text.
+Apache-2.0 was chosen over MIT for its express patent grant, which is the objection corporate
+open-source review raises most often about a tool that sits in a change-control path.
 
 ## Contributing
 
