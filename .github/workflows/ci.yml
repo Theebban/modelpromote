@@ -12,10 +12,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22.6 is the floor claimed in package.json engines. The floor is tested here
-        # BECAUSE it cannot be tested on the maintainer's machine, which carries only the
-        # current Node. A claimed floor nobody runs is a claim, not a fact.
-        node: ['22.6', '22.x', '24.x', 'current']
+        # 22.0 is the floor declared in package.json engines, and it is tested here so the
+        # declared floor is a fact rather than a claim. 22.6 is kept because the source
+        # workflow needs it: the test and demo scripts run TypeScript directly via
+        # --experimental-strip-types, which landed in 22.6. The published package is plain
+        # JavaScript and needs neither.
+        node: ['22.0', '22.6', '22.x', '24.x', 'current']
     steps:
       - uses: actions/checkout@v4
 
