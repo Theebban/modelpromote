@@ -1,4 +1,3 @@
-# CI for a future GitHub remote. Not active: this repository has no remote yet.
 name: ci
 
 on:
@@ -12,12 +11,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22.0 is the floor declared in package.json engines, and it is tested here so the
-        # declared floor is a fact rather than a claim. 22.6 is kept because the source
-        # workflow needs it: the test and demo scripts run TypeScript directly via
-        # --experimental-strip-types, which landed in 22.6. The published package is plain
-        # JavaScript and needs neither.
-        node: ['22.0', '22.6', '22.x', '24.x', 'current']
+        # These jobs run the SOURCE workflow, which executes TypeScript directly via
+        # --experimental-strip-types. That flag landed in 22.6, so 22.6 is the floor for
+        # CONTRIBUTING, and it is the lowest version this matrix can meaningfully use.
+        #
+        # It is NOT the floor package.json declares. `engines` is a promise to CONSUMERS,
+        # who install plain JavaScript and never run this workflow, so the declared floor is
+        # verified through the consumer path in the `floor` job below. Testing a consumer
+        # promise with a maintainer workflow was the mistake that produced this comment.
+        node: ['22.6', '22.x', '24.x', 'current']
     steps:
       - uses: actions/checkout@v4
 
@@ -51,3 +53,58 @@ jobs:
       # Each safety invariant must fail when the implementation is deliberately broken.
       - name: mutation testing
         run: bash scripts/mutate.sh
+
+  # THE DECLARED FLOOR, verified the way a consumer meets it.
+  #
+  # package.json says engines.node >=22.0.0. That claim is about the PUBLISHED PACKAGE, so
+  # it is tested by building and packing on a modern Node, then installing the tarball on
+  # the exact declared floor and driving a real lifecycle through the installed binary.
+  # Nothing here runs the source workflow, because a consumer never does.
+  floor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build and pack on a modern Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - run: npm install
+      - run: npm run build
+      - run: npm pack --pack-destination /tmp
+
+      - name: switch to the exact declared floor
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.0'
+
+      - name: the declared floor must actually run the published package
+        run: |
+          node -v
+          DECLARED=$(node -p "require('./package.json').engines.node")
+          echo "declared engines floor: $DECLARED"
+          mkdir -p /tmp/consumer && cd /tmp/consumer
+          npm init -y > /dev/null
+          npm pkg set type=module > /dev/null
+          npm install /tmp/modelpromote-*.tgz
+          MP=./node_modules/.bin/modelpromote
+          test -x "$MP"
+          "$MP" --help > /dev/null
+          mkdir -p proj
+          "$MP" init --root proj > /dev/null
+          "$MP" register demo-candidate --root proj > /dev/null
+          if "$MP" activate --actor ci --root proj > /dev/null 2>&1; then
+            echo "activation was allowed before approval"; exit 1
+          fi
+          "$MP" evaluate --root proj > /dev/null
+          "$MP" approve --actor ci --root proj > /dev/null
+          "$MP" activate --actor ci --root proj > /dev/null
+          "$MP" verify --root proj | grep -q "confirmed     : YES"
+          "$MP" close --actor ci --root proj > /dev/null
+          "$MP" register demo-regression --root proj > /dev/null
+          node --input-type=module -e "
+            import { nextState, assertCrossEventConsistency } from 'modelpromote';
+            if (nextState('APPROVED','beginActivation') !== 'ACTIVATING') throw new Error('nextState');
+            if (typeof assertCrossEventConsistency !== 'function') throw new Error('exports');
+            console.log('library import ok on ' + process.version);
+          "
