@@ -5,7 +5,9 @@
 # exist, so the first publication of a brand-new package is always a manual bootstrap.
 #
 # WHAT HAS TO HAPPEN ON npmjs.com FIRST, once:
-#   1. publish modelpromote@0.1.0 manually, from an authenticated machine, with 2FA
+#   1. publish the first version manually, from an authenticated machine, with 2FA.
+#      v0.1.0 was tagged and released on GitHub but never published to npm, so the first
+#      registry version is 0.1.1.
 #   2. on the package page: Settings -> Trusted publishers -> GitHub Actions
 #        GitHub owner   : Theebban
 #        repository     : modelpromote
