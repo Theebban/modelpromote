@@ -21,9 +21,27 @@
 # grants the permission. A pipeline that can publish unattended has collapsed the two.
 name: release
 
+# MANUAL UNTIL THE NPM SIDE EXISTS.
+#
+# This is deliberately workflow_dispatch and NOT tag-triggered yet. A trusted publisher is a
+# setting on an npm package, and the package does not exist, so a tag-triggered run today
+# would fail every time a release is tagged and leave a red mark that means nothing except
+# "the bootstrap has not happened".
+#
+# AFTER the first manual publish and after the trusted publisher is configured, replace the
+# trigger below with:
+#
+#   on:
+#     push:
+#       tags: ['v*']
+#
+# and the release becomes: tag -> stage -> a human approves the `release` environment.
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type the version to publish, e.g. 0.1.1"
+        required: true
 
 jobs:
   publish:
@@ -48,12 +66,12 @@ jobs:
       - run: npm run check
       - run: bash scripts/package-smoke.sh
 
-      - name: verify the tag matches the package version
+      - name: verify the requested version matches the package
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          REQ="${{ inputs.confirm }}"
           PKG=$(node -p "require('./package.json').version")
-          echo "tag=$TAG package=$PKG"
-          test "$TAG" = "$PKG"
+          echo "requested=$REQ package=$PKG"
+          test "$REQ" = "$PKG"
 
       # No --provenance flag: under trusted publishing npm generates and publishes provenance
       # automatically for a public package from a public repository. Passing it out of habit
