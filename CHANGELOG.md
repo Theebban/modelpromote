@@ -7,7 +7,42 @@ Two things are treated as public API and therefore as breaking changes:
 **the transition table** and **the ledger record format**. A change to either gets a major
 version once 1.0.0 is out, because both are things users build process around.
 
-## [Unreleased]
+## [0.1.1] - 2026-08-26
+
+Completes the public open-source surface. No behaviour changed, and no feature was added.
+
+### Added
+- **`NOTICE`**, so attribution survives redistribution. Apache-2.0 requires downstream
+  redistributors to pass on a NOTICE file if one exists; without it, attribution travels only
+  in the licence header. Three lines, no extra conditions.
+- **README section 2, "What can you do with it?"** The lifecycle was documented; the concrete
+  operations it enables were not.
+- **README section 3, "What does it work with?"** A compatibility table for the evaluation,
+  activation, telemetry and generation layers, with the truthful status recorded against every
+  named system: **architecture-compatible, adapter required**. No official or community adapter
+  ships for any of them, none of those vendors is affiliated with this project, and the README
+  says so in as many words.
+- **README section 4, "Bringing your own stack."** The bring-your-own path existed and was
+  reachable only by reading `src/ports/index.ts`. It is now a worked `createPorts` snippet, with
+  the one hard requirement stated plainly: an activation target must be readable, not only
+  writable.
+- **README section 5, "What it deliberately does not replace."**
+
+### Changed
+- README sections renumbered to make room; the invariants are now section 13. Two paragraphs
+  that the new sections duplicated were removed from sections 1 and 6, so each point is stated
+  once.
+
+## [0.1.0] - 2026-08-26
+
+First public release. https://github.com/Theebban/modelpromote/releases/tag/v0.1.0
+
+Governed change control for swapping the AI model in a production application: evaluate, accept
+against a locked policy, approve, activate with read-back confirmation, verify from telemetry,
+roll back, and keep one portable migration record. Zero runtime dependencies. Apache-2.0.
+
+The subsections below record how this build reached that point, including two review cycles it
+failed and the corrections that followed. All of it shipped in 0.1.0.
 
 ### Renamed for first public release
 
@@ -120,9 +155,13 @@ edited out.
 - Public positioning corrected: modelpromote does not claim to have invented governed AI
   rollout. See the README.
 
-## [0.1.0] - unreleased, local only
+## Pre-release build history (never published)
 
-First working end-to-end lifecycle. Not published, no remote, no package registry entry.
+The first working end-to-end lifecycle, built locally under the working name modelshift. It
+carried the version string 0.1.0 while it had no remote and no registry entry, and it is NOT
+the 0.1.0 that was released: two independent reviews failed this build, and the corrections
+above are what the public 0.1.0 actually contains. Kept because "this is what shipped first and
+it was wrong in these ways" is part of the record.
 
 ### Added
 - Migration state machine with an allow-list transition table: `REGISTERED`, `EVALUATED`,

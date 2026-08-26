@@ -1,6 +1,6 @@
 {
   "name": "modelpromote",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A vendor-neutral change-control layer for swapping the AI model in a production application: evaluate, accept against a locked policy, approve, activate with read-back confirmation, verify from telemetry, roll back, and keep one portable migration record.",
   "type": "module",
   "license": "Apache-2.0",
@@ -23,7 +23,8 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "keywords": [
     "llm",

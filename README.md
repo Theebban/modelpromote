@@ -40,11 +40,96 @@ modelpromote is the thin layer that:
 - **reads back**, so ACTIVATED means the target confirmed the change, not that a write returned;
 - **produces one file** that reconstructs the whole migration without any of those vendors.
 
-If you are happy inside a single vendor's ecosystem and expect to stay there, that vendor's
-built-in governance is likely a better fit than this. modelpromote is for the common case where
-the pieces are heterogeneous, or where the record needs to outlive the tools.
+## 2. What can you do with it?
 
-## 2. When should I use it?
+Concrete operations, all of which are refusals or records rather than suggestions.
+
+- **Migrate between models, versions or providers.** The framework holds no opinion about
+  what a model id means. Moving from one vendor to another, or from one snapshot of the same
+  vendor's model to the next, is the same lifecycle.
+- **Compare a candidate against the baseline before anything is activated**, under an
+  acceptance policy you declare in advance: minimum score, maximum regression, cases that must
+  pass, and whether critical failures are tolerated.
+- **Require a named human to approve.** A passing score is a machine verdict. It is recorded
+  separately from permission, and permission cannot be inferred from evidence.
+- **Confirm the activation actually took**, by reading the serving model back out of your
+  system rather than trusting that a write returned.
+- **Refuse to activate when production has drifted.** If the serving model is no longer the
+  baseline the candidate was measured against, the migration stops before anything is written.
+- **Keep a rollback target that a later config edit cannot redirect.** It is locked when the
+  migration begins.
+- **Verify from telemetry before calling anything stable**, under a hard ceiling on the traffic
+  issued, with an empty observation set never counting as confirmation.
+- **Walk away with one portable file** that reconstructs the whole migration: what was
+  measured, under which policy, who authorised it, what actually served afterwards, and how it
+  ended. It stays readable without any of the tools that produced it.
+
+## 3. What does it work with?
+
+**modelpromote ships no vendor integrations.** It has zero runtime dependencies and it is not
+trying to replace anything already in your stack. It sits in front of the tools you run and
+governs the change across them, through four small interfaces you implement once.
+
+| Layer | Systems this is designed to sit alongside | Status today |
+|---|---|---|
+| **Evaluation** (`Evaluator`) | Promptfoo, DeepEval, Langfuse evaluations, an LLM judge, an internal benchmark harness | Architecture-compatible, **adapter required** |
+| **Activation** (`ActivationTarget`) | LaunchDarkly or another flag platform, a config service, a deployment or control-plane API, an environment variable, a database row | Architecture-compatible, **adapter required** |
+| **Telemetry** (`TelemetrySource`) | Langfuse, an OpenTelemetry-backed store, a tracing vendor, your own logs or metrics API | Architecture-compatible, **adapter required** |
+| **Generation** (`ModelAdapter`) | a provider SDK, a gateway such as LiteLLM, your own client | Architecture-compatible, **adapter required** |
+
+**Read that status literally.** No official adapter ships for any product named above, no
+community adapter exists yet, and none of these vendors is affiliated with this project. What
+ships is the lifecycle, the four interfaces, and a **reference example** of wiring them
+(`examples/custom-ports/`). The named systems are the shape of thing each port is for, not a
+list of things that already work out of the box.
+
+The requirement each port places on your system is small and worth checking before you start:
+
+- `Evaluator` must return one result per submitted case, exactly.
+- `ActivationTarget` must be able to **read the serving model back**, not only write it. This
+  is the one hard requirement. A target you can write but not read cannot be governed here,
+  because "we wrote the config" is precisely the claim this framework refuses to accept.
+- `TelemetrySource` must be able to report which model served recent traffic, and to scope that
+  to observations after a marker.
+
+## 4. Bringing your own stack
+
+If you already have an evaluator, a deployment API and a telemetry store, you keep all three.
+You implement the ports for them and change nothing else.
+
+```ts
+// modelpromote.ports.ts, beside your config. The CLI picks it up automatically.
+import type { Ports } from 'modelpromote';
+
+export function createPorts(root: string): Ports {
+  return {
+    models: new Map([['gpt-x', myProviderAdapter('gpt-x')]]),   // your client
+    evaluator: myEvalHarness,                                    // your scoring
+    activation: myConfigService,                                 // read() and write()
+    telemetry: myTraceStore,                                     // observations(since)
+    now: () => new Date().toISOString(),
+    verificationPlan: () => myVerificationTraffic,
+  };
+}
+```
+
+Four functions, one file. Nothing in the core imports an adapter, so there is no plugin
+registry to satisfy and no framework to adopt. A worked example that implements all four
+against local stand-ins is in [`examples/custom-ports/`](examples/custom-ports/), and the
+interfaces themselves are in [`src/ports/index.ts`](src/ports/index.ts).
+
+## 5. What it deliberately does not replace
+
+Your evaluation framework, your model gateway, your feature-flag platform, your observability
+stack, your CI. It does not route traffic, serve a dashboard, score output quality, or host
+anything. Those are solved and competitive spaces, and a governance layer that also tried to
+win them would be worse at both.
+
+If you are happy inside one vendor's ecosystem and expect to stay there, that vendor's built-in
+governance is likely the better fit. modelpromote is for the case where the pieces are
+heterogeneous, or where the record has to outlive the tools that made it.
+
+## 6. When should I use it?
 
 - Your evaluation, activation and telemetry come from **different tools**, or you expect to
   change one of them.
@@ -53,10 +138,7 @@ the pieces are heterogeneous, or where the record needs to outlive the tools.
 - The person who evaluates is not always the person who activates.
 - You want the gate **in front of** your flag system, not instead of it.
 
-**Do not use it** to route traffic, gateway providers, run evaluations, or serve a dashboard.
-It integrates with the tools that do those things.
-
-## 3. Five-minute demonstration
+## 7. Five-minute demonstration
 
 Requires **Node 22 or newer**. No API key, no `.env`, no account, no network. Tests and demo
 run from a bare clone with **no install**.
@@ -97,7 +179,7 @@ That substitution is caught because a *second* record contradicts it. Tamper wit
 migration that has only ever been registered and there is nothing yet to disagree with, so
 it loads. The binding takes effect from the first record that depends on the identity.
 
-## 4. The migration lifecycle
+## 8. The migration lifecycle
 
 ```
               register        evaluate        policy         approve
@@ -132,7 +214,7 @@ something could be live, including `STABLE`, and it still works when the ledger 
 
 Run `modelpromote states` for the full table.
 
-## 5. CLI
+## 9. CLI
 
 | Command | What it does |
 |---|---|
@@ -155,7 +237,7 @@ without `--actor` is refused: an approval with no named actor is not an approval
 
 The same operations are a library: `import { register, evaluate, approve, activate } from 'modelpromote'`.
 
-## 6. Configuration
+## 10. Configuration
 
 ```json
 {
@@ -193,7 +275,7 @@ After a migration closes as `STABLE`, the candidate is your new baseline in fact
 `baselineModel` to match, or the next migration's activation will refuse with a
 `BaselineDriftError` naming both models.
 
-## 7. State-machine semantics
+## 11. State-machine semantics
 
 - **The ledger is the state.** `.modelpromote/migrations/NNNN.jsonl` is append-only, and current
   state is a fold over it. No separate state field can drift from the record.
@@ -231,7 +313,7 @@ After a migration closes as `STABLE`, the candidate is your new baseline in fact
 - **Activation fails closed on baseline drift.** Before anything is recorded or written, the
   serving model must be the baseline this migration measured against.
 
-## 8. Adapters
+## 12. Adapters
 
 Four small interfaces (`src/ports/index.ts`). Implement them and the lifecycle governs your
 system unchanged.
@@ -258,7 +340,7 @@ is indistinguishable from a complete one. There is no sampling mode in v0. This 
 evaluation framework; it makes no judgement about whether a score is *good*, only about
 whether it is *coherent* and *complete*.
 
-## 9. Safety invariants
+## 13. Safety invariants
 
 Each is enforced in code and covered by a test that **fails when the implementation is
 deliberately broken** (`docs/mutation-testing.md`, 40 mutations, all killed).
@@ -286,7 +368,7 @@ deliberately broken** (`docs/mutation-testing.md`, 40 mutations, all killed).
 19. **`status().verdict` is the verdict in force**, never a superseded one.
 20. **An interrupted registration cannot wedge a project.**
 
-## 10. Limitations
+## 14. Limitations
 
 **v0.1.0.**
 
@@ -321,7 +403,7 @@ deliberately broken** (`docs/mutation-testing.md`, 40 mutations, all killed).
   deterministic (fixed clock, no randomness), but Node's experimental type-stripping warning
   includes a changing process id, so the full stream differs.
 
-## 11. Roadmap
+## 15. Roadmap
 
 Integration first. The point is to be the governance layer over tools you already run.
 
@@ -371,4 +453,4 @@ open-source review raises most often about a tool that sits in a change-control 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The invariants in section 9 are the contract.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The invariants in section 13 are the contract.

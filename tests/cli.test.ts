@@ -89,7 +89,7 @@ describe('the command may appear after its options', () => {
 });
 
 describe('the documented five-minute walkthrough, end to end', () => {
-  test('every step of README section 3 runs in the order it is written', () => {
+  test('every step of README section 7 runs in the order it is written', () => {
     const ms = (...args: string[]) => cli('--root', root, ...args);
 
     assert.equal(ms('init').code, 0);
@@ -134,7 +134,7 @@ describe('the documented five-minute walkthrough, end to end', () => {
     // contradict, and a substitution there is still internally consistent.
     assert.equal(ms('evaluate').code, 0);
 
-    // README section 3: substitute the candidate in the first record, change nothing else.
+    // README section 7: substitute the candidate in the first record, change nothing else.
     const ledger = join(root, '.modelpromote', 'migrations', '0001.jsonl');
     const lines = readFileSync(ledger, 'utf8').trim().split('\n');
     const first = JSON.parse(lines[0] as string) as { detail: Record<string, unknown> };
