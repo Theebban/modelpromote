@@ -1,81 +1,84 @@
 # PUBLISH TO NPM VIA TRUSTED PUBLISHING (OIDC). NO TOKEN IS STORED ANYWHERE.
 #
-# This workflow is PREPARED, not proven. It has never run. It cannot work until the npm side
-# is configured, because a trusted publisher is a setting on an npm package that must already
-# exist, so the first publication of a brand-new package is always a manual bootstrap.
+# Releasing needs TWO human approvals, on purpose:
 #
-# WHAT HAS TO HAPPEN ON npmjs.com FIRST, once:
-#   1. publish the first version manually, from an authenticated machine, with 2FA.
-#      v0.1.0 was tagged and released on GitHub but never published to npm, so the first
-#      registry version is 0.1.1.
-#   2. on the package page: Settings -> Trusted publishers -> GitHub Actions
-#        GitHub owner   : Theebban
-#        repository     : modelpromote
-#        workflow file  : release.yml
-#        environment    : release
-#   3. then set publishing access to
-#        "Require two-factor authentication and disallow tokens"
-#      which is safe precisely BECAUSE this workflow uses OIDC rather than a token.
+#   tag v*  ->  gates run  ->  [1] a reviewer releases the `release` environment
+#                          ->  npm stage publish
+#                          ->  [2] a maintainer approves the staged version with 2FA
+#                          ->  it becomes public
 #
-# WHY AN ENVIRONMENT. The `release` environment below should carry a required reviewer, so a
-# tagged release stages the publish and then WAITS for a human to approve it. That is the same
-# separation this project exists to enforce: the machine produces the evidence, a named person
-# grants the permission. A pipeline that can publish unattended has collapsed the two.
+# The trusted publisher for this package is deliberately configured WITHOUT
+# "Allow npm publish", so this workflow can only ever STAGE. Even if it were
+# compromised it could not make a version public on its own, because the second
+# approval happens off this machine, on npm, behind 2FA.
+#
+# That is the same separation the package itself enforces. A pipeline that can
+# publish unattended has collapsed evidence and permission into one step.
+#
+# npm side, already configured:
+#   Trusted publisher: GitHub Actions, Theebban/modelpromote, release.yml, environment `release`
+#   Allowed actions  : stage only
+#   Publishing access: require 2FA, disallow bypass-2FA tokens
 name: release
 
-# MANUAL UNTIL THE NPM SIDE EXISTS.
-#
-# This is deliberately workflow_dispatch and NOT tag-triggered yet. A trusted publisher is a
-# setting on an npm package, and the package does not exist, so a tag-triggered run today
-# would fail every time a release is tagged and leave a red mark that means nothing except
-# "the bootstrap has not happened".
-#
-# AFTER the first manual publish and after the trusted publisher is configured, replace the
-# trigger below with:
-#
-#   on:
-#     push:
-#       tags: ['v*']
-#
-# and the release becomes: tag -> stage -> a human approves the `release` environment.
 on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: "Type the version to publish, e.g. 0.1.1"
-        required: true
+  push:
+    tags: ['v*']
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Carries a required reviewer. The run pauses here until a human releases it.
     environment: release
     permissions:
       contents: read
-      # Required for OIDC. This is what replaces a stored npm token.
+      # This is what replaces a stored npm token. Without it, OIDC cannot mint
+      # the short-lived credential and the publish fails closed.
       id-token: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          # Trusted publishing requires Node 22.14+ and npm 11.5.1+. That is a requirement of
-          # the PUBLISHING environment and has nothing to do with engines.node, which is the
-          # floor this package promises its consumers.
+          # Staged publishing requires Node >=22.14 and npm >=11.15. This is a
+          # requirement of the PUBLISHING environment and has nothing to do with
+          # engines.node, which is the floor the PACKAGE promises its consumers.
           node-version: '24.x'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: the toolchain must actually meet npm's staged-publishing floor
+        run: |
+          node -v && npm -v
+          node -e '
+            const [nMaj,nMin] = process.versions.node.split(".").map(Number);
+            if (nMaj < 22 || (nMaj === 22 && nMin < 14)) {
+              throw new Error("staged publishing needs Node >=22.14, got " + process.version);
+            }
+          '
+          npm -v | awk -F. '{ if ($1 < 11 || ($1 == 11 && $2 < 15)) { print "staged publishing needs npm >=11.15.0, got " $0; exit 1 } }'
 
       - run: npm ci
       - run: npm run check
       - run: bash scripts/package-smoke.sh
 
-      - name: verify the requested version matches the package
+      - name: the tag must match the version being published
         run: |
-          REQ="${{ inputs.confirm }}"
+          TAG="${GITHUB_REF_NAME#v}"
           PKG=$(node -p "require('./package.json').version")
-          echo "requested=$REQ package=$PKG"
-          test "$REQ" = "$PKG"
+          echo "tag=$TAG package=$PKG"
+          test "$TAG" = "$PKG"
 
-      # No --provenance flag: under trusted publishing npm generates and publishes provenance
-      # automatically for a public package from a public repository. Passing it out of habit
-      # would be noise.
-      - run: npm publish
+      # STAGE, never publish. The trusted publisher is not permitted to publish
+      # directly, so this is the only command that can succeed here.
+      #
+      # No --provenance flag: under trusted publishing npm attaches provenance
+      # automatically for a public package from a public repository.
+      - name: stage the release for human approval
+        run: npm stage publish
+
+      - name: how to complete the release
+        run: |
+          echo "Staged. It is NOT public yet."
+          echo "Approve it with 2FA, either:"
+          echo "  npm stage list modelpromote && npm stage approve <stage-id>"
+          echo "or on npmjs.com -> the package -> Staged Packages -> Approve."
