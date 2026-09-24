@@ -1,7 +1,7 @@
 {
   "name": "modelpromote",
-  "version": "0.1.1",
-  "description": "A vendor-neutral change-control layer for swapping the AI model in a production application: evaluate, accept against a locked policy, approve, activate with read-back confirmation, verify from telemetry, roll back, and keep one portable migration record.",
+  "version": "0.1.2",
+  "description": "Govern the switch when you change the AI model in production: evaluate against a locked policy, require a named human approval, activate with read-back confirmation, verify from telemetry, and roll back to a target that cannot be redirected. Zero runtime dependencies.",
   "type": "module",
   "license": "Apache-2.0",
   "engines": {
@@ -28,11 +28,15 @@
   ],
   "keywords": [
     "llm",
+    "llmops",
+    "llm-migration",
     "model-migration",
+    "model-deprecation",
+    "model-rollback",
+    "rollback",
     "change-control",
     "governance",
     "audit-trail",
-    "rollback",
     "state-machine",
     "ai-ops"
   ],

@@ -7,6 +7,40 @@ Two things are treated as public API and therefore as breaking changes:
 **the transition table** and **the ledger record format**. A change to either gets a major
 version once 1.0.0 is out, because both are things users build process around.
 
+## [0.1.2] - 2026-09-25
+
+Discoverability. No behaviour changed, no feature was added, and no claim grew.
+
+The project was public and installable but effectively invisible: it did not appear in general
+web search at all, and its own front page led with vocabulary this field does not use. This
+release fixes what the project says about itself, not what it does.
+
+### Added
+- **`AGENTS.md`**, so a coding agent working in this repository has the conventions stated
+  rather than inferred: the gate command, the four ledger validation layers, fail closed on
+  promotion and fail open on rollback, and the rule that a machine verdict is not permission.
+- **Package keywords for the vocabulary people actually search**: `llm-migration`,
+  `model-deprecation`, `model-rollback`, `llmops`. Model changes are usually forced by a
+  deprecation or end-of-life date, and none of that language appeared anywhere on this project.
+
+### Changed
+- **The README opening states what this governs.** The previous opening led with "change
+  control", which is accurate and is not what anyone types into a search box. It now names the
+  trigger (a provider deprecates a model, or a better one ships), the boundary against the
+  evaluation tools this is constantly mistaken for, and that it is TypeScript with zero
+  runtime dependencies.
+- **Section 5 states the seam explicitly.** Most neighbouring tools answer whether the
+  candidate is good enough, before the change. This one starts where that answer is already
+  yes. They are complements, and a reader arriving from an evaluation tool should not have to
+  work that out.
+- **The package description** now leads with the same thing.
+
+### Fixed
+- **The five-minute demonstration could not be copy-pasted.** It said
+  `git clone <this repo>`, a placeholder that survived into the public README. It is now the
+  real URL. Every other command in the quickstart was re-executed verbatim to confirm the same
+  class of defect was not hiding elsewhere.
+
 ## [0.1.1] - 2026-08-26
 
 Completes the public open-source surface. No behaviour changed, and no feature was added.

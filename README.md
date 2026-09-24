@@ -1,8 +1,15 @@
 # modelpromote
 
-**A vendor-neutral change-control layer for swapping the AI model in a production application.**
+**Govern the switch itself: approve the model change, confirm it actually took, verify it from
+telemetry, and keep a rollback target that cannot be redirected.**
 
 Created and maintained by **Theebbanraj Asokan**.
+
+A provider deprecates a model, or a better one ships, and you have to move. Evaluation tools
+answer *is the candidate good enough*. modelpromote governs what happens once that answer is
+yes: who authorised the change, whether the switch actually took, what served traffic
+afterwards, and how to undo it. It is a vendor-neutral change-control layer, written in
+TypeScript with **zero runtime dependencies**.
 
 You already have evaluation, an activation mechanism and telemetry. They are probably three
 different products, and none of them holds the whole story of a model change. modelpromote is a
@@ -125,6 +132,12 @@ stack, your CI. It does not route traffic, serve a dashboard, score output quali
 anything. Those are solved and competitive spaces, and a governance layer that also tried to
 win them would be worse at both.
 
+Most tools that come up alongside this one answer the question **before** the change: is the
+candidate good enough? They evaluate, replay recorded traffic, run canaries and detect
+regressions. modelpromote starts where that answer is already yes, and governs the change
+itself. The two are complements: bring your own evidence, and this decides whether the switch
+is allowed to happen, confirms it did, and can undo it.
+
 If you are happy inside one vendor's ecosystem and expect to stay there, that vendor's built-in
 governance is likely the better fit. modelpromote is for the case where the pieces are
 heterogeneous, or where the record has to outlive the tools that made it.
@@ -144,7 +157,7 @@ Requires **Node 22 or newer**. No API key, no `.env`, no account, no network. Te
 run from a bare clone with **no install**.
 
 ```bash
-git clone <this repo> && cd modelpromote
+git clone https://github.com/Theebban/modelpromote.git && cd modelpromote
 mkdir /tmp/demo
 alias ms="node --experimental-strip-types src/cli/index.ts --root /tmp/demo"
 
