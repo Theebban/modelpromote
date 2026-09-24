@@ -419,22 +419,30 @@ Integration first. The point is to be the governance layer over tools you alread
 
 ## Install
 
-> **Not on npm yet.** The package is built, gated and release-tagged, but the first registry
-> publication has not happened. `npm install modelpromote` does not work today, and this
-> section will say so until it does.
-
-Install from source. There is nothing to install *into* it: the core has zero runtime
-dependencies, and the tests and the demo both run from a bare clone.
-
 ```bash
-git clone https://github.com/Theebban/modelpromote && cd modelpromote
-
-npm test        # 146 tests, no install needed
-npm run demo    # the whole lifecycle, offline, no API key, no account
+npm install modelpromote
 ```
 
-Once it is on npm, the same thing becomes `npm install modelpromote` and the CLI becomes
-`npx modelpromote`. Using it as a library looks like this either way:
+Requires Node 22 or newer. The core has **zero runtime dependencies**, so nothing else comes
+with it.
+
+Try the whole governed lifecycle offline, with no API key and no account:
+
+```bash
+npx modelpromote init
+npx modelpromote register demo-candidate
+npx modelpromote activate --actor you    # refused: nothing evaluated or approved
+npx modelpromote evaluate
+npx modelpromote approve --actor you
+npx modelpromote activate --actor you    # confirmed by reading the target back
+npx modelpromote verify
+npx modelpromote report
+```
+
+Or from a bare clone, with no install at all: `npm test` runs 146 tests and `npm run demo`
+runs the same lifecycle.
+
+Using it as a library:
 
 ```js
 import { register, evaluate, decide, approve, activate, verify } from 'modelpromote';
