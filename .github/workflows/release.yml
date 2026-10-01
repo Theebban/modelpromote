@@ -44,16 +44,11 @@ jobs:
 
       # The release as its users will receive it: packed, installed into a clean project,
       # imported and run on the engines floor (an official Node 22.0.0 build, checksum
-      # verified) and on current Node. Pinned to an exact asinstalled release.
-      - uses: actions/checkout@v4
-        with:
-          repository: Theebban/asinstalled
-          ref: v0.1.0
-          path: .asinstalled
+      # verified) and on current Node. asinstalled is installed from npm, pinned to an exact version.
       - name: consumer path (asinstalled)
-        run: node --experimental-strip-types .asinstalled/src/cli.ts check --dir . --run "modelpromote --help"
+        run: npx --yes asinstalled@0.1.0 check --dir . --run "modelpromote --help"
       - name: documentation matches the package (asinstalled)
-        run: node --experimental-strip-types .asinstalled/src/cli.ts docs --dir .
+        run: npx --yes asinstalled@0.1.0 docs --dir .
 
       - name: the tag must match the version being published
         run: |

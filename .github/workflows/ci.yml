@@ -110,7 +110,7 @@ jobs:
           "
 
   # THE PACKAGE AS ITS USERS RECEIVE IT, checked by asinstalled (the same author's tool,
-  # pinned to an exact release). Additive for now: the hand-written `floor` job above stays
+  # installed from npm, pinned to an exact version). Additive for now: the hand-written `floor` job above stays
   # until this has a track record. Runs with no publishing credentials, as asinstalled
   # advises, because installing runs lifecycle scripts.
   consumer-path:
@@ -119,16 +119,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: Theebban/asinstalled
-          ref: v0.1.0
-          path: .asinstalled
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
       - run: npm ci
       - name: pack, install, import and run on the engines floor and current Node
-        run: node --experimental-strip-types .asinstalled/src/cli.ts check --dir . --run "modelpromote --help"
+        run: npx --yes asinstalled@0.1.0 check --dir . --run "modelpromote --help"
       - name: documentation matches the package
-        run: node --experimental-strip-types .asinstalled/src/cli.ts docs --dir .
+        run: npx --yes asinstalled@0.1.0 docs --dir .
