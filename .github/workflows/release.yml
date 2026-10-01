@@ -2,18 +2,20 @@
 #
 # Releasing needs TWO human approvals, on purpose:
 #
-#   tag v*  ->  gates run  ->  [1] a reviewer releases the `release` environment
-#                          ->  npm stage publish
-#                          ->  [2] a maintainer approves the staged version with 2FA
-#                          ->  it becomes public
+#   tag v*  ->  verify (no credentials)  ->  [1] a reviewer releases the `release` environment
+#                                        ->  npm stage publish
+#                                        ->  [2] a maintainer approves the staged version with 2FA
+#                                        ->  it becomes public
 #
 # The trusted publisher for this package is deliberately configured WITHOUT
 # "Allow npm publish", so this workflow can only ever STAGE. Even if it were
 # compromised it could not make a version public on its own, because the second
 # approval happens off this machine, on npm, behind 2FA.
 #
-# That is the same separation the package itself enforces. A pipeline that can
-# publish unattended has collapsed evidence and permission into one step.
+# VERIFY AND PUBLISH ARE SEPARATE JOBS. Installing packages runs lifecycle scripts, and
+# none should run where a publishing credential can be minted. So every check, including
+# the consumer-path check by asinstalled, runs in `verify`, which has no id-token
+# permission; `publish` installs with --ignore-scripts and only packs and stages.
 #
 # npm side, already configured:
 #   Trusted publisher: GitHub Actions, Theebban/modelpromote, release.yml, environment `release`
@@ -25,8 +27,43 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: read
+
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - run: npm ci
+      - run: npm run check
+      - run: bash scripts/package-smoke.sh
+
+      # The release as its users will receive it: packed, installed into a clean project,
+      # imported and run on the engines floor (an official Node 22.0.0 build, checksum
+      # verified) and on current Node. Pinned to an exact asinstalled release.
+      - uses: actions/checkout@v4
+        with:
+          repository: Theebban/asinstalled
+          ref: v0.1.0
+          path: .asinstalled
+      - name: consumer path (asinstalled)
+        run: node --experimental-strip-types .asinstalled/src/cli.ts check --dir . --run "modelpromote --help"
+      - name: documentation matches the package (asinstalled)
+        run: node --experimental-strip-types .asinstalled/src/cli.ts docs --dir .
+
+      - name: the tag must match the version being published
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          echo "tag=$TAG package=$PKG"
+          test "$TAG" = "$PKG"
+
   publish:
+    needs: verify
     runs-on: ubuntu-latest
     # Carries a required reviewer. The run pauses here until a human releases it.
     environment: release
@@ -57,20 +94,11 @@ jobs:
           '
           npm -v | awk -F. '{ if ($1 < 11 || ($1 == 11 && $2 < 15)) { print "staged publishing needs npm >=11.15.0, got " $0; exit 1 } }'
 
-      - run: npm ci
-      - run: npm run check
-      - run: bash scripts/package-smoke.sh
-
-      - name: the tag must match the version being published
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(node -p "require('./package.json').version")
-          echo "tag=$TAG package=$PKG"
-          test "$TAG" = "$PKG"
+      # No install script runs in the job that can mint a publishing credential.
+      - run: npm ci --ignore-scripts
 
       # STAGE, never publish. The trusted publisher is not permitted to publish
       # directly, so this is the only command that can succeed here.
-      #
       # No --provenance flag: under trusted publishing npm attaches provenance
       # automatically for a public package from a public repository.
       - name: stage the release for human approval
